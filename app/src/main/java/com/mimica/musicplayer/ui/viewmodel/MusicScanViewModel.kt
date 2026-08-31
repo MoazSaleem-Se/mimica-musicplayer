@@ -1,0 +1,83 @@
+package com.mimica.musicplayer.ui.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.mimica.musicplayer.data.local.AppDatabase
+import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.data.repository.MusicRepository
+import com.mimica.musicplayer.data.scanner.MediaScanner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+sealed interface ScanUiState {
+    data object Idle : ScanUiState
+    data object Loading : ScanUiState
+    data class Success(val songs: List<AudioEntity>) : ScanUiState
+    data object Empty : ScanUiState
+    data object PermissionDenied : ScanUiState
+    data class Error(val message: String) : ScanUiState
+}
+
+class MusicScanViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository: MusicRepository
+
+    private val _scanState = MutableStateFlow<ScanUiState>(ScanUiState.Idle)
+    val scanState: StateFlow<ScanUiState> = _scanState.asStateFlow()
+
+    init {
+        val database = AppDatabase.getDatabase(application)
+        val scanner = MediaScanner(application)
+        repository = MusicRepository(database.audioDao(), scanner)
+
+        // Load cached songs from Room immediately if available
+        loadCachedMusic()
+    }
+
+    private fun loadCachedMusic() {
+        viewModelScope.launch {
+            try {
+                val cached = repository.getCachedAudio()
+                if (cached.isNotEmpty()) {
+                    _scanState.value = ScanUiState.Success(cached)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun onPermissionGranted() {
+        scanMusic()
+    }
+
+    fun onPermissionDenied() {
+        _scanState.value = ScanUiState.PermissionDenied
+    }
+
+    fun scanMusic() {
+        viewModelScope.launch {
+            _scanState.value = ScanUiState.Loading
+            try {
+                // Short delay to ensure smooth transition
+                delay(400)
+                val songs = repository.scanAndCacheMusic()
+                if (songs.isEmpty()) {
+                    _scanState.value = ScanUiState.Empty
+                } else {
+                    _scanState.value = ScanUiState.Success(songs)
+                }
+            } catch (e: SecurityException) {
+                _scanState.value = ScanUiState.PermissionDenied
+            } catch (e: Exception) {
+                _scanState.value = ScanUiState.Error(
+                    e.localizedMessage ?: "Failed to scan audio files. Please try again."
+                )
+            }
+        }
+    }
+}
