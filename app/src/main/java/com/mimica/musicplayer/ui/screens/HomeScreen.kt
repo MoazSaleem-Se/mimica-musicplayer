@@ -1,5 +1,7 @@
 package com.mimica.musicplayer.ui.screens
 
+import android.util.Log
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -32,7 +34,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Notifications
@@ -40,12 +44,16 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -66,16 +75,26 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit = { _, _ -> },
-    scanViewModel: MusicScanViewModel = viewModel()
+    scanViewModel: MusicScanViewModel = viewModel(),
+    playlistViewModel: PlaylistViewModel = viewModel(),
+    playerViewModel: PlayerViewModel = viewModel()
 ) {
     val scanState by scanViewModel.scanState.collectAsState()
+    val currentSong by playerViewModel.currentSong.collectAsState()
+    val isPlayerPlaying by playerViewModel.isPlaying.collectAsState()
     val context = LocalContext.current
+
+    var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
 
     val permissionsToRequest = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -222,10 +241,61 @@ fun HomeScreen(
                 }
 
                 items(state.songs, key = { it.id }) { audio ->
-                    ScannedSongListItem(
-                        audio = audio,
-                        onClick = { onAudioClick(audio, state.songs) }
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { dismissValue ->
+                            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                                songForPlaylistDialog = audio
+                            }
+                            false
+                        }
                     )
+
+                    val isCurrentSong = currentSong?.id == audio.id
+                    val isSongPlaying = isCurrentSong && isPlayerPlaying
+
+                    if (isCurrentSong) {
+                        Log.d("SongIcon", "Song: ${audio.title}, currentSongId: ${currentSong?.id}, isPlaying: $isPlayerPlaying")
+                        Log.d("SongIcon", "isCurrentSong: $isCurrentSong")
+                        Log.d("SongIcon", "isSongPlaying: $isSongPlaying")
+                    }
+
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        enableDismissFromStartToEnd = false,
+                        enableDismissFromEndToStart = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
+                        backgroundContent = {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .padding(horizontal = 20.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlaylistAdd,
+                                    contentDescription = "Add to Playlist",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                    ) {
+                        ScannedSongListItemContent(
+                            audio = audio,
+                            isPlaying = isSongPlaying,
+                            onClick = {
+                                if (isCurrentSong) {
+                                    playerViewModel.togglePlayPause()
+                                } else {
+                                    onAudioClick(audio, state.songs)
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
@@ -273,6 +343,102 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Add to Playlist Dialog on Swipe Action
+    if (songForPlaylistDialog != null) {
+        AddToPlaylistDialog(
+            song = songForPlaylistDialog!!,
+            playlistViewModel = playlistViewModel,
+            onDismiss = { songForPlaylistDialog = null }
+        )
+    }
+}
+
+@Composable
+fun ScannedSongListItemContent(
+    audio: AudioEntity,
+    isPlaying: Boolean = false,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!audio.albumArtUri.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(audio.albumArtUri)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = audio.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = audio.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${audio.artist} • ${audio.album}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Text(
+                text = audio.durationFormatted,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            IconButton(onClick = onClick) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
@@ -464,93 +630,6 @@ fun ErrorCard(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(text = "Retry Scan")
-            }
-        }
-    }
-}
-
-@Composable
-fun ScannedSongListItem(
-    audio: AudioEntity,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 5.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(54.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                if (!audio.albumArtUri.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(audio.albumArtUri)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = audio.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.matchParentSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = audio.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "${audio.artist} • ${audio.album}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Text(
-                text = audio.durationFormatted,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            IconButton(onClick = onClick) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = MaterialTheme.colorScheme.primary
-                )
             }
         }
     }

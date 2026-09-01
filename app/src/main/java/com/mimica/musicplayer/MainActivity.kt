@@ -96,6 +96,7 @@ fun MusicPlayerApp(
                 ) {
                     composable(Screen.Home.route) {
                         HomeScreen(
+                            playerViewModel = playerViewModel,
                             onAudioClick = { audio, playlist ->
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -107,6 +108,7 @@ fun MusicPlayerApp(
                     }
                     composable(Screen.Search.route) {
                         SearchScreen(
+                            playerViewModel = playerViewModel,
                             onAudioClick = { audio, playlist ->
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -118,6 +120,7 @@ fun MusicPlayerApp(
                     }
                     composable(Screen.Library.route) {
                         LibraryScreen(
+                            playerViewModel = playerViewModel,
                             onAudioClick = { audio, playlist ->
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()

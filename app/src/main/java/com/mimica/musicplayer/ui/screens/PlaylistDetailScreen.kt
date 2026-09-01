@@ -26,15 +26,20 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,10 +59,12 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.local.PlaylistEntity
+import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
     playlist: PlaylistEntity,
@@ -68,6 +75,7 @@ fun PlaylistDetailScreen(
     val context = LocalContext.current
     val playlistSongs by playlistViewModel.getSongsForPlaylist(playlist.id).collectAsState(initial = emptyList())
     var showDeletePlaylistDialog by remember { mutableStateOf(false) }
+    var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
 
     val totalDurationMs = remember(playlistSongs) {
         playlistSongs.sumOf { it.duration }
@@ -178,7 +186,7 @@ fun PlaylistDetailScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Songs List
+        // Songs List with Swipe Actions (Left: Add to Playlist, Right: Remove from Playlist)
         if (playlistSongs.isEmpty()) {
             Column(
                 modifier = Modifier
@@ -214,26 +222,89 @@ fun PlaylistDetailScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(playlistSongs, key = { it.id }) { audio ->
-                    PlaylistSongItem(
-                        audio = audio,
-                        onClick = {
-                            if (audio.filePath.isBlank()) {
-                                Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
-                            } else {
-                                onAudioClick(audio, playlistSongs)
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { dismissValue ->
+                            when (dismissValue) {
+                                SwipeToDismissBoxValue.EndToStart -> {
+                                    // Swipe Left -> Add to Another Playlist
+                                    songForPlaylistDialog = audio
+                                    false
+                                }
+                                SwipeToDismissBoxValue.StartToEnd -> {
+                                    // Swipe Right -> Remove from Current Playlist
+                                    playlistViewModel.removeSongFromPlaylist(playlist.id, audio.id)
+                                    Toast.makeText(context, "Removed '${audio.title}' from ${playlist.name}", Toast.LENGTH_SHORT).show()
+                                    false
+                                }
+                                else -> false
                             }
-                        },
-                        onRemove = {
-                            playlistViewModel.removeSongFromPlaylist(playlist.id, audio.id)
-                            Toast.makeText(context, "Removed from ${playlist.name}", Toast.LENGTH_SHORT).show()
                         }
                     )
+
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        enableDismissFromStartToEnd = true,
+                        enableDismissFromEndToStart = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
+                        backgroundContent = {
+                            val direction = dismissState.dismissDirection
+                            val isSwipeLeft = direction == SwipeToDismissBoxValue.EndToStart
+                            val bgColor = if (isSwipeLeft) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.errorContainer
+                            }
+                            val icon = if (isSwipeLeft) {
+                                Icons.Default.PlaylistAdd
+                            } else {
+                                Icons.Default.DeleteOutline
+                            }
+                            val iconTint = if (isSwipeLeft) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            }
+                            val alignment = if (isSwipeLeft) Alignment.CenterEnd else Alignment.CenterStart
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(bgColor)
+                                    .padding(horizontal = 20.dp),
+                                contentAlignment = alignment
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = iconTint,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                    ) {
+                        PlaylistSongItemContent(
+                            audio = audio,
+                            onClick = {
+                                if (audio.filePath.isBlank()) {
+                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    onAudioClick(audio, playlistSongs)
+                                }
+                            },
+                            onRemove = {
+                                playlistViewModel.removeSongFromPlaylist(playlist.id, audio.id)
+                                Toast.makeText(context, "Removed from ${playlist.name}", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
                 }
             }
         }
     }
 
-    // Delete Confirmation Dialog
     if (showDeletePlaylistDialog) {
         AlertDialog(
             onDismissRequest = { showDeletePlaylistDialog = false },
@@ -262,10 +333,18 @@ fun PlaylistDetailScreen(
             }
         )
     }
+
+    if (songForPlaylistDialog != null) {
+        AddToPlaylistDialog(
+            song = songForPlaylistDialog!!,
+            playlistViewModel = playlistViewModel,
+            onDismiss = { songForPlaylistDialog = null }
+        )
+    }
 }
 
 @Composable
-fun PlaylistSongItem(
+fun PlaylistSongItemContent(
     audio: AudioEntity,
     onClick: () -> Unit,
     onRemove: () -> Unit
@@ -273,8 +352,7 @@ fun PlaylistSongItem(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 5.dp),
+            .clickable { onClick() },
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     ) {

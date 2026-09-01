@@ -25,11 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -38,7 +41,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,7 +66,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
 
 data class GenreCategory(
@@ -69,13 +78,20 @@ data class GenreCategory(
     val gradientColors: List<Color>
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit = { _, _ -> },
-    scanViewModel: MusicScanViewModel = viewModel()
+    scanViewModel: MusicScanViewModel = viewModel(),
+    playlistViewModel: PlaylistViewModel = viewModel(),
+    playerViewModel: PlayerViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scanState by scanViewModel.scanState.collectAsState()
+    val currentSong by playerViewModel.currentSong.collectAsState()
+    val isPlayerPlaying by playerViewModel.isPlaying.collectAsState()
+
+    var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
 
     val allLocalSongs: List<AudioEntity> = remember(scanState) {
         when (val state = scanState) {
@@ -100,7 +116,6 @@ fun SearchScreen(
         GenreCategory("8", "Classical", listOf(Color(0xFF795548), Color(0xFF4E342E)))
     )
 
-    // Filter real local songs based on query and tag
     val filteredSongs = remember(searchQuery, selectedTag, allLocalSongs) {
         if (searchQuery.isBlank() && selectedTag == "All") {
             emptyList()
@@ -126,7 +141,6 @@ fun SearchScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Title
         Text(
             text = "Search",
             style = MaterialTheme.typography.headlineMedium,
@@ -136,7 +150,6 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Search TextField
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -177,7 +190,6 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Quick Tag Chips
         LazyRow(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -216,20 +228,60 @@ fun SearchScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(filteredSongs, key = { it.id }) { audio ->
-                        SearchSongListItem(
-                            audio = audio,
-                            onClick = {
-                                if (audio.filePath.isBlank()) {
-                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    onAudioClick(audio, filteredSongs)
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = { dismissValue ->
+                                if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                                    songForPlaylistDialog = audio
                                 }
+                                false
                             }
                         )
+
+                        val isCurrentSong = currentSong?.id == audio.id
+                        val isSongPlaying = isCurrentSong && isPlayerPlaying
+
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            enableDismissFromStartToEnd = false,
+                            enableDismissFromEndToStart = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 4.dp),
+                            backgroundContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlaylistAdd,
+                                        contentDescription = "Add to Playlist",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                            }
+                        ) {
+                            SearchSongListItemContent(
+                                audio = audio,
+                                isPlaying = isSongPlaying,
+                                onClick = {
+                                    if (audio.filePath.isBlank()) {
+                                        Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                    } else if (isCurrentSong) {
+                                        playerViewModel.togglePlayPause()
+                                    } else {
+                                        onAudioClick(audio, filteredSongs)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             } else {
-                // No local results found
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -260,7 +312,6 @@ fun SearchScreen(
                 }
             }
         } else {
-            // Default Browse Categories Grid
             Text(
                 text = "Browse Categories",
                 style = MaterialTheme.typography.titleMedium,
@@ -287,6 +338,14 @@ fun SearchScreen(
                 }
             }
         }
+    }
+
+    if (songForPlaylistDialog != null) {
+        AddToPlaylistDialog(
+            song = songForPlaylistDialog!!,
+            playlistViewModel = playlistViewModel,
+            onDismiss = { songForPlaylistDialog = null }
+        )
     }
 }
 
@@ -321,15 +380,15 @@ fun CategoryGridCard(
 }
 
 @Composable
-fun SearchSongListItem(
+fun SearchSongListItemContent(
     audio: AudioEntity,
+    isPlaying: Boolean = false,
     onClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 5.dp),
+            .clickable { onClick() },
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     ) {
@@ -398,8 +457,8 @@ fun SearchSongListItem(
 
             IconButton(onClick = onClick) {
                 Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Play",
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
                     tint = MaterialTheme.colorScheme.primary
                 )
             }

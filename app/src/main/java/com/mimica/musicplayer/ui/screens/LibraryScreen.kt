@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -40,8 +41,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,22 +66,29 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.local.PlaylistEntity
+import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit = { _, _ -> },
     scanViewModel: MusicScanViewModel = viewModel(),
-    playlistViewModel: PlaylistViewModel = viewModel()
+    playlistViewModel: PlaylistViewModel = viewModel(),
+    playerViewModel: PlayerViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scanState by scanViewModel.scanState.collectAsState()
+    val currentSong by playerViewModel.currentSong.collectAsState()
+    val isPlayerPlaying by playerViewModel.isPlaying.collectAsState()
     val playlists by playlistViewModel.playlists.collectAsState()
 
     var selectedPlaylistForDetail by remember { mutableStateOf<PlaylistEntity?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
 
     val songs: List<AudioEntity> = remember(scanState) {
         when (val state = scanState) {
@@ -227,16 +238,57 @@ fun LibraryScreen(
                             }
 
                             items(songs, key = { it.id }) { audio ->
-                                ScannedSongListItem(
-                                    audio = audio,
-                                    onClick = {
-                                        if (audio.filePath.isBlank()) {
-                                            Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            onAudioClick(audio, songs)
+                                val dismissState = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { dismissValue ->
+                                        if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                                            songForPlaylistDialog = audio
                                         }
+                                        false
                                     }
                                 )
+
+                                val isCurrentSong = currentSong?.id == audio.id
+                                val isSongPlaying = isCurrentSong && isPlayerPlaying
+
+                                SwipeToDismissBox(
+                                    state = dismissState,
+                                    enableDismissFromStartToEnd = false,
+                                    enableDismissFromEndToStart = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                                    backgroundContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlaylistAdd,
+                                                contentDescription = "Add to Playlist",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    ScannedSongListItemContent(
+                                        audio = audio,
+                                        isPlaying = isSongPlaying,
+                                        onClick = {
+                                            if (audio.filePath.isBlank()) {
+                                                Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                            } else if (isCurrentSong) {
+                                                playerViewModel.togglePlayPause()
+                                            } else {
+                                                onAudioClick(audio, songs)
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -265,7 +317,6 @@ fun LibraryScreen(
                                 }
                             }
 
-                            // Built-in All Music playlist
                             item {
                                 LibraryGroupRowItem(
                                     title = "All Scanned Music",
@@ -283,7 +334,6 @@ fun LibraryScreen(
                                 )
                             }
 
-                            // Custom playlists from Database
                             items(playlists, key = { it.id }) { pl ->
                                 LibraryGroupRowItem(
                                     title = pl.name,
@@ -367,7 +417,6 @@ fun LibraryScreen(
         }
     }
 
-    // Create Playlist Dialog
     if (showCreatePlaylistDialog) {
         var playlistNameInput by remember { mutableStateOf("") }
         AlertDialog(
@@ -409,6 +458,14 @@ fun LibraryScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    if (songForPlaylistDialog != null) {
+        AddToPlaylistDialog(
+            song = songForPlaylistDialog!!,
+            playlistViewModel = playlistViewModel,
+            onDismiss = { songForPlaylistDialog = null }
         )
     }
 }

@@ -6,13 +6,16 @@ import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.media.AudioManager
 import android.media.audiofx.AudioEffect
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +26,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import kotlin.math.abs
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +45,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -108,12 +117,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -126,6 +138,7 @@ import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -181,6 +194,7 @@ fun NowPlayingBottomSheet(
                 palette = albumPalette,
                 onPlayPauseClick = { playerViewModel.togglePlayPause() },
                 onNextClick = { playerViewModel.skipToNext() },
+                onPreviousClick = { playerViewModel.skipToPrevious() },
                 onClick = { isExpanded = true },
                 onImageLoaded = { bitmap -> playerViewModel.updatePalette(bitmap) }
             )
@@ -239,9 +253,15 @@ fun MiniPlayerContent(
     palette: Palette?,
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
+    onPreviousClick: () -> Unit = {},
     onClick: () -> Unit,
     onImageLoaded: (android.graphics.Bitmap) -> Unit = {}
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val thresholdPx = with(density) { 100.dp.toPx() }
+    val offsetX = remember { Animatable(0f) }
+
     val defaultPrimary = MaterialTheme.colorScheme.primary
     val vibrantColor = remember(palette, defaultPrimary) {
         palette?.let { Color(it.getVibrantColor(defaultPrimary.toArgb())) } ?: defaultPrimary
@@ -255,11 +275,67 @@ fun MiniPlayerContent(
         modifier = Modifier
             .fillMaxWidth()
             .height(80.dp)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
+            .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+            .pointerInput(song.id) {
+                Log.d("SwipeDebug", "PointerInput attached")
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var totalDragX = 0f
+                    var isDragging = false
+                    val touchSlop = viewConfiguration.touchSlop
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                        if (!change.pressed) {
+                            if (!isDragging) {
+                                // Detected tap -> Expand player
+                                Log.d("SwipeDebug", "Tap detected")
+                                onClick()
+                            } else {
+                                // Drag finished -> Evaluate swipe threshold
+                                coroutineScope.launch {
+                                    if (offsetX.value < -thresholdPx) {
+                                        // Swiped Left -> Skip Next
+                                        Log.d("SwipeDebug", "Threshold exceeded! Left")
+                                        offsetX.animateTo(-250f, tween(150))
+                                        onNextClick()
+                                        offsetX.snapTo(250f)
+                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                    } else if (offsetX.value > thresholdPx) {
+                                        // Swiped Right -> Skip Previous
+                                        Log.d("SwipeDebug", "Threshold exceeded! Right")
+                                        offsetX.animateTo(250f, tween(150))
+                                        onPreviousClick()
+                                        offsetX.snapTo(-250f)
+                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                    } else {
+                                        // Snap back if threshold not met
+                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                    }
+                                }
+                            }
+                            break
+                        }
+
+                        val dragAmount = change.position.x - change.previousPosition.x
+                        totalDragX += dragAmount
+
+                        if (!isDragging && abs(totalDragX) > touchSlop) {
+                            isDragging = true
+                        }
+
+                        if (isDragging) {
+                            Log.d("SwipeDebug", "Drag detected: $dragAmount")
+                            change.consume()
+                            coroutineScope.launch {
+                                offsetX.snapTo(offsetX.value + dragAmount)
+                            }
+                        }
+                    }
+                }
+            },
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         shadowElevation = 8.dp
@@ -402,6 +478,11 @@ fun FullPlayerContent(
     onImageLoaded: (android.graphics.Bitmap) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val collapseThresholdPx = with(density) { 150.dp.toPx() }
+    val dragOffsetY = remember { Animatable(0f) }
+
     var showMenu by remember { mutableStateOf(false) }
 
     var showPlaylistDialog by remember { mutableStateOf(false) }
@@ -622,7 +703,7 @@ fun FullPlayerContent(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. LARGE ALBUM ART SECTION
+        // 2. LARGE ALBUM ART SECTION (With Swipe-Down to Collapse Gesture)
         AnimatedContent(
             targetState = song.id,
             transitionSpec = {
@@ -635,11 +716,39 @@ fun FullPlayerContent(
                 modifier = Modifier
                     .fillMaxWidth(0.68f)
                     .aspectRatio(1f)
+                    .offset { IntOffset(0, dragOffsetY.value.roundToInt()) }
                     .shadow(
                         elevation = 12.dp,
                         shape = RoundedCornerShape(24.dp),
                         clip = false
-                    ),
+                    )
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                coroutineScope.launch {
+                                    if (dragOffsetY.value >= collapseThresholdPx) {
+                                        onCollapse()
+                                        dragOffsetY.snapTo(0f)
+                                    } else {
+                                        dragOffsetY.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                coroutineScope.launch {
+                                    dragOffsetY.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (dragAmount > 0 || dragOffsetY.value > 0) {
+                                    change.consume()
+                                    coroutineScope.launch {
+                                        dragOffsetY.snapTo((dragOffsetY.value + dragAmount).coerceAtLeast(0f))
+                                    }
+                                }
+                            }
+                        )
+                    },
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -926,7 +1035,7 @@ fun FullPlayerContent(
         }
     }
 
-    // 1. Add to Playlist Dialog (Connected to real Room playlists)
+    // 1. Add to Playlist Dialog
     if (showPlaylistDialog) {
         AddToPlaylistDialog(
             song = song,

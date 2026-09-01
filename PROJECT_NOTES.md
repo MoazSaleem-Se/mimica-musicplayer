@@ -25,10 +25,10 @@ Generated on 2026-08-31 based on source analysis of the repository.
 - **`playback/`**:
   - `MusicPlayerService.kt`: `MediaSessionService` (Media3) handling background playback. Creates `ExoPlayer` with `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`, `handleAudioFocus = true` to pause on calls and resume after, and `handleAudioBecomingNoisy = true`). Creates a `MediaSession` with an immutable `PendingIntent` launching `MainActivity`.
 - **`ui/components/`**:
-  - `NowPlayingBottomSheet.kt`: Main active player UI component and modal controllers. Contains:
+  - `NowPlayingBottomSheet.kt`: Main active player UI component, gestures, and modal controllers. Contains:
     - `NowPlayingBottomSheet`: Controls `AnimatedVisibility` for the floating mini player and launches `ModalBottomSheet` for the full player.
-    - `MiniPlayerContent`: 80.dp persistent bottom bar with Coil artwork thumbnail, title, artist, live progress indicator line, play/pause button, and skip next.
-    - `FullPlayerContent`: Full-screen player with top collapse/menu bar, 68% width artwork card, title/artist, live seek bar slider with timestamps, 5 control buttons (Shuffle, Prev, 72.dp Play/Pause FAB, Next, Repeat), media volume slider, queue info, and favorite toggle.
+    - `MiniPlayerContent`: 80.dp persistent bottom bar with Coil artwork thumbnail, title, artist, live progress indicator line, play/pause button, skip next, and **horizontal swipe gestures** (~100dp threshold) to skip next/previous tracks with smooth `Animatable` spring physics.
+    - `FullPlayerContent`: Full-screen player with top collapse/menu bar, 68% width artwork card with **vertical swipe-down gesture** (~150dp threshold) on album art to collapse, title/artist, live seek bar slider with timestamps, 5 control buttons (Shuffle, Prev, 72.dp Play/Pause FAB, Next, Repeat), media volume slider, queue info, and favorite toggle.
     - `AddToPlaylistDialog`: Real Room-backed dialog to save `currentSong` to existing playlists or create a new playlist on the fly.
     - `ArtistSongsDialog`: Dialog filtering and listing all tracks by the current song's artist with direct playback.
     - `SleepTimerDialog`: Interactive countdown selection (15/30/45/60 min) with cancel option.
@@ -37,14 +37,14 @@ Generated on 2026-08-31 based on source analysis of the repository.
 - **`ui/navigation/`**:
   - `Screen.kt`: Sealed class defining navigation destinations (`Home`, `Search`, `Library`, `Player`) with title and Material icons.
 - **`ui/screens/`**:
-  - `HomeScreen.kt`: Scans device storage with runtime permission checking (`READ_MEDIA_AUDIO` + `POST_NOTIFICATIONS` on API 33+, `READ_EXTERNAL_STORAGE` on API <33). Displays scanned song list with shimmer loading, permission request, empty state, and error handling.
-  - `SearchScreen.kt`: Real-time search UI over scanned local tracks (filtering title, artist, album) with genre quick tags and category browse cards.
-  - `LibraryScreen.kt`: Real library browser with category tabs ("All Tracks", "Playlists", "Artists", "Albums"). Provides inline playlist creation and navigation to `PlaylistDetailScreen`.
-  - `PlaylistDetailScreen.kt`: Full detail view for playlists showing track list, total runtime, "Play All" button, track removal, and playlist deletion.
+  - `HomeScreen.kt`: Scans device storage with runtime permission checking (`READ_MEDIA_AUDIO` + `POST_NOTIFICATIONS` on API 33+, `READ_EXTERNAL_STORAGE` on API <33). Displays scanned song list with shimmer loading, permission request, empty state, and **SwipeToDismissBox** gesture (Swipe Left to Add to Playlist).
+  - `SearchScreen.kt`: Real-time search UI over scanned local tracks (filtering title, artist, album) with genre quick tags, category browse cards, and **SwipeToDismissBox** gesture (Swipe Left to Add to Playlist).
+  - `LibraryScreen.kt`: Real library browser with category tabs ("All Tracks", "Playlists", "Artists", "Albums"). Provides inline playlist creation, navigation to `PlaylistDetailScreen`, and **SwipeToDismissBox** gesture on tracks.
+  - `PlaylistDetailScreen.kt`: Full detail view for playlists showing track list, total runtime, "Play All" button, **SwipeToDismissBox** gestures (Swipe Left to Add to Another Playlist, Swipe Right to Remove from Playlist), and playlist deletion.
 - **`ui/theme/`**:
   - `Color.kt`, `Theme.kt`, `Type.kt`: Jetpack Compose Material 3 theme definitions with Material You dynamic color support.
 - **`ui/viewmodel/`**:
-  - `PlayerViewModel.kt`: Central playback ViewModel connecting to `MusicPlayerService` via Media3 `MediaController`. Manages playback state, queue, position progress tracking, Sleep Timer countdown, and Palette colors. Validates `filePath.isNotBlank()` before playback. Sets entire playlist into ExoPlayer timeline for full notification/lock-screen controls.
+  - `PlayerViewModel.kt`: Central playback ViewModel connecting to `MusicPlayerService` via Media3 `MediaController`. Manages playback state, queue, position progress tracking, Sleep Timer countdown, and Palette colors. Validates file paths proactively.
   - `PlaylistViewModel.kt`: Manages playlist state, creation, deletion, song addition, song removal, and reactive song flow for playlists.
   - `MusicScanViewModel.kt`: Media scanning ViewModel connecting to `MusicRepository`. Manages `ScanUiState` (`Idle`, `Loading`, `Success`, `Empty`, `PermissionDenied`, `Error`).
 - **`utils/`**:
@@ -54,13 +54,13 @@ Generated on 2026-08-31 based on source analysis of the repository.
 
 ### Actual Playback Data Flow (From UI Tap to Audio Output)
 
-1. **User Tap**: User taps a song in `HomeScreen`, `SearchScreen`, `LibraryScreen`, `PlaylistDetailScreen`, or `ArtistSongsDialog`.
+1. **User Tap / Gesture**: User taps a song in `HomeScreen`, `SearchScreen`, `LibraryScreen`, `PlaylistDetailScreen`, or swipes MiniPlayer / FullPlayer.
 2. **Screen Callback**: Screen validates that `audio.filePath` is not empty and invokes `onAudioClick(audio, playlist)`. If `filePath` is blank, displays Toast `"This song is not available offline"`.
 3. **Activity Host**: `MainActivity.kt`'s `MusicPlayerApp` receives the callback, re-verifies `filePath.isNotBlank()`, and calls `playerViewModel.play(audio, playlist)`.
 4. **`PlayerViewModel`**:
-   - Validates `song.filePath.isNotBlank()`.
+   - Validates `song.filePath.isNotBlank()` and physical file existence.
    - Updates `_currentSong.value` and `_currentPlaylist.value`.
-   - Dispatches a coroutine to extract Palette colors from `song.albumArtUri` via `ColorExtractor.extractPaletteFromUri()` and updates `_albumPalette`.
+   - Dispatches a coroutine with cancellation to extract Palette colors from `song.albumArtUri` via `ColorExtractor.extractPaletteFromUri()` and updates `_albumPalette`.
    - Checks `mediaController`:
      - If `null`, stores `Pair(song, playlist)` into `pendingPlayRequest`, ensures `initializeController()` is running, and returns early.
      - When `controllerFuture` completes, `initializeController()` retrieves `mediaController`, configures `Player.Listener` (including `onMediaItemTransition`), and calls `play(song, playlist)`.
@@ -161,9 +161,9 @@ Verified from `gradle/libs.versions.toml` and `app/build.gradle.kts`:
 
 ## 6. Recent Fixes & Features
 
-### 1. MediaSession, Foreground Service & Lock-Screen Synchronization
-- Sourced the entire `playlist` to `ExoPlayer` via `controller.setMediaItems(...)` so system notifications, lock screens, and Bluetooth devices have the full timeline and can trigger skip next/previous natively.
-- Added `onMediaItemTransition` in `Player.Listener` (`PlayerViewModel.kt`) to keep in-app UI, colors, and duration in sync when tracks change outside the app.
-- Added `POST_NOTIFICATIONS` runtime permission request in `HomeScreen.kt` on Android 13+ (API 33+).
-- Refined `onTaskRemoved` lifecycle check in `MusicPlayerService.kt` to ensure foreground service stays active only when actively playing.
-- Verified `AudioAttributes` with `handleAudioFocus = true` and `setHandleAudioBecomingNoisy(true)`.
+### 1. Gesture Support Across Music Player
+- **Mini Player Horizontal Swipe**: Added horizontal drag gestures with ~100dp threshold to skip tracks (Swipe Left $ightarrow$ Next, Swipe Right $ightarrow$ Previous) with spring physics and non-blocking tap-to-expand.
+- **Full Player Swipe-Down to Collapse**: Added vertical drag gestures with ~150dp threshold on Album Art card to collapse player smoothly without conflicting with bottom sheet content.
+- **Song List Swipe Actions**: Integrated `SwipeToDismissBox` across `HomeScreen`, `SearchScreen`, `LibraryScreen`, and `PlaylistDetailScreen`:
+  - Swipe Left (All Screens): Opens "Add to Playlist" dialog.
+  - Swipe Right (PlaylistDetailScreen): Removes track from the playlist.
