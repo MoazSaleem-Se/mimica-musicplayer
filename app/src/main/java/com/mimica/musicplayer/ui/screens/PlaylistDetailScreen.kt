@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,10 +46,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -223,24 +227,29 @@ fun PlaylistDetailScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(playlistSongs, key = { it.id }) { audio ->
+                    val coroutineScope = rememberCoroutineScope()
+                    lateinit var dismissStateRef: SwipeToDismissBoxState
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.EndToStart -> {
                                     // Swipe Left -> Add to Another Playlist
                                     songForPlaylistDialog = audio
+                                    coroutineScope.launch { dismissStateRef.reset() }
                                     false
                                 }
                                 SwipeToDismissBoxValue.StartToEnd -> {
                                     // Swipe Right -> Remove from Current Playlist
                                     playlistViewModel.removeSongFromPlaylist(playlist.id, audio.id)
                                     Toast.makeText(context, "Removed '${audio.title}' from ${playlist.name}", Toast.LENGTH_SHORT).show()
+                                    coroutineScope.launch { dismissStateRef.reset() }
                                     false
                                 }
                                 else -> false
                             }
                         }
                     )
+                    dismissStateRef = dismissState
 
                     SwipeToDismissBox(
                         state = dismissState,
@@ -355,7 +364,11 @@ fun PlaylistSongItemContent(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        color = lerp(
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.surfaceVariant,
+            0.4f
+        )
     ) {
         Row(
             modifier = Modifier
