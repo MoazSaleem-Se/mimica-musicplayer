@@ -1,10 +1,9 @@
 package com.mimica.musicplayer.ui.screens
 
-import android.util.Log
-
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -28,9 +27,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
@@ -63,20 +66,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
@@ -85,11 +89,15 @@ import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
+import kotlinx.coroutines.launch
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit = { _, _ -> },
+    onStatsClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
     scanViewModel: MusicScanViewModel = viewModel(),
     playlistViewModel: PlaylistViewModel = viewModel(),
     playerViewModel: PlayerViewModel = viewModel()
@@ -100,6 +108,16 @@ fun HomeScreen(
     val context = LocalContext.current
 
     var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
+
+    // Dynamic greeting based on current time
+    val greeting = remember {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        when (hour) {
+            in 4..11 -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            else -> "Good evening"
+        }
+    }
 
     val permissionsToRequest = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -150,56 +168,17 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 96.dp)
+        contentPadding = PaddingValues(bottom = 100.dp)
     ) {
-        // Header
+        // 1. Top Header with Greeting & Action Buttons
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Local Library",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "My Music",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (hasPermission) {
-                        IconButton(onClick = { scanViewModel.scanMusic() }) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Rescan Library",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    IconButton(onClick = { /* Notification action */ }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Notifications,
-                            contentDescription = "Notifications",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = { /* Settings action */ }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Settings,
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+            HomeHeaderSection(
+                greeting = greeting,
+                hasPermission = hasPermission,
+                onRescanClick = { scanViewModel.scanMusic() },
+                onStatsClick = onStatsClick,
+                onSettingsClick = onSettingsClick
+            )
         }
 
         // Permission Card if Not Granted
@@ -236,73 +215,131 @@ fun HomeScreen(
             }
 
             is ScanUiState.Success -> {
-                item {
-                    Text(
-                        text = "${state.songs.size} Songs Found",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    )
-                }
+                val songs = state.songs
 
-                items(state.songs, key = { it.id }) { audio ->
-                    val coroutineScope = rememberCoroutineScope()
-                    lateinit var dismissStateRef: SwipeToDismissBoxState
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { dismissValue ->
-                            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                                songForPlaylistDialog = audio
-                                coroutineScope.launch { dismissStateRef.reset() }
-                            }
-                            false
-                        }
-                    )
-                    dismissStateRef = dismissState
-
-                    val isCurrentSong = currentSong?.id == audio.id
-                    val isSongPlaying = isCurrentSong && isPlayerPlaying
-
-                    if (isCurrentSong) {
-                        Log.d("SongIcon", "Song: ${audio.title}, currentSongId: ${currentSong?.id}, isPlaying: $isPlayerPlaying")
-                        Log.d("SongIcon", "isCurrentSong: $isCurrentSong")
-                        Log.d("SongIcon", "isSongPlaying: $isSongPlaying")
-                    }
-
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        enableDismissFromStartToEnd = false,
-                        enableDismissFromEndToStart = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 4.dp),
-                        backgroundContent = {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(MaterialTheme.colorScheme.primaryContainer)
-                                    .padding(horizontal = 20.dp),
-                                contentAlignment = Alignment.CenterEnd
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlaylistAdd,
-                                    contentDescription = "Add to Playlist",
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
-                        }
-                    ) {
-                        ScannedSongListItemContent(
-                            audio = audio,
-                            isPlaying = isSongPlaying,
-                            onClick = {
-                                if (isCurrentSong) {
+                if (songs.isNotEmpty()) {
+                    // 2. Quick Picks Section (Horizontal Carousel with 160dp Large Cards)
+                    item {
+                        QuickPicksSection(
+                            songs = songs.take(10),
+                            currentSong = currentSong,
+                            isPlaying = isPlayerPlaying,
+                            onSongClick = { song ->
+                                if (currentSong?.id == song.id) {
                                     playerViewModel.togglePlayPause()
                                 } else {
-                                    onAudioClick(audio, state.songs)
+                                    onAudioClick(song, songs)
                                 }
                             }
+                        )
+                    }
+
+                    // 3. Keep Listening Section (Compact Recent Items)
+                    if (songs.size > 2) {
+                        item {
+                            KeepListeningSection(
+                                songs = songs.drop(2).take(6),
+                                currentSong = currentSong,
+                                isPlaying = isPlayerPlaying,
+                                onSongClick = { song ->
+                                    if (currentSong?.id == song.id) {
+                                        playerViewModel.togglePlayPause()
+                                    } else {
+                                        onAudioClick(song, songs)
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    // 4. All Songs Section Header
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "All Songs (${songs.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Swipe to playlist",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // All Songs List Items with SwipeToDismissBox
+                    items(songs, key = { it.id }) { audio ->
+                        val coroutineScope = rememberCoroutineScope()
+                        lateinit var dismissStateRef: SwipeToDismissBoxState
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = { dismissValue ->
+                                if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                                    songForPlaylistDialog = audio
+                                    coroutineScope.launch { dismissStateRef.reset() }
+                                }
+                                false
+                            }
+                        )
+                        dismissStateRef = dismissState
+
+                        val isCurrentSong = currentSong?.id == audio.id
+                        val isSongPlaying = isCurrentSong && isPlayerPlaying
+
+                        if (isCurrentSong) {
+                            Log.d("SongIcon", "Song: ${audio.title}, currentSongId: ${currentSong?.id}, isPlaying: $isPlayerPlaying")
+                            Log.d("SongIcon", "isCurrentSong: $isCurrentSong")
+                            Log.d("SongIcon", "isSongPlaying: $isSongPlaying")
+                        }
+
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            enableDismissFromStartToEnd = false,
+                            enableDismissFromEndToStart = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 4.dp),
+                            backgroundContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlaylistAdd,
+                                        contentDescription = "Add to Playlist",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                            }
+                        ) {
+                            ScannedSongListItemContent(
+                                audio = audio,
+                                isPlaying = isSongPlaying,
+                                onClick = {
+                                    if (isCurrentSong) {
+                                        playerViewModel.togglePlayPause()
+                                    } else {
+                                        onAudioClick(audio, songs)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    item {
+                        EmptySongsCard(
+                            onRescan = { scanViewModel.scanMusic() }
                         )
                     }
                 }
@@ -336,22 +373,7 @@ fun HomeScreen(
             }
 
             is ScanUiState.Idle -> {
-                if (!hasPermission) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Grant storage permission to view local songs.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+                // Idle state before auto-scan starts
             }
         }
     }
@@ -365,6 +387,359 @@ fun HomeScreen(
         )
     }
 }
+
+// -------------------------------------------------------------------------
+// 1. Top Header Composable
+// -------------------------------------------------------------------------
+
+@Composable
+fun HomeHeaderSection(
+    greeting: String,
+    hasPermission: Boolean,
+    onRescanClick: () -> Unit,
+    onStatsClick: () -> Unit,
+    onSettingsClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .padding(start = 20.dp, end = 12.dp, top = 20.dp, bottom = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = greeting,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Mimica Music",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasPermission) {
+                    IconButton(onClick = onRescanClick) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Rescan Library",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                IconButton(onClick = onStatsClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.BarChart,
+                        contentDescription = "Stats",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onSettingsClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = "Settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// 2. Quick Picks Section (Horizontal Carousel with 160dp Large Cards)
+// -------------------------------------------------------------------------
+
+@Composable
+fun QuickPicksSection(
+    songs: List<AudioEntity>,
+    currentSong: AudioEntity?,
+    isPlaying: Boolean,
+    onSongClick: (AudioEntity) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 12.dp)
+    ) {
+        Text(
+            text = "Quick picks",
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+        )
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            items(songs, key = { "quick_${it.id}" }) { song ->
+                val isSongActive = currentSong?.id == song.id
+                val isTrackPlaying = isSongActive && isPlaying
+
+                QuickPickCard(
+                    song = song,
+                    isPlaying = isTrackPlaying,
+                    onClick = { onSongClick(song) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun QuickPickCard(
+    song: AudioEntity,
+    isPlaying: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .size(width = 160.dp, height = 160.dp)
+            .shadow(4.dp, RoundedCornerShape(16.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Album Art Background
+            if (!song.albumArtUri.isNullOrEmpty()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(song.albumArtUri)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = song.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
+            }
+
+            // Dark gradient overlay for text readability
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.25f),
+                                Color.Black.copy(alpha = 0.85f)
+                            )
+                        )
+                    )
+            )
+
+            // Play / Pause Indicator Badge in Top-Right
+            if (isPlaying) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Pause,
+                        contentDescription = "Playing",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Title and Artist Overlay at Bottom
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(12.dp)
+                    .fillMaxWidth()
+            ) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song.artist,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// 3. Keep Listening Section (Horizontal row of 48dp items)
+// -------------------------------------------------------------------------
+
+@Composable
+fun KeepListeningSection(
+    songs: List<AudioEntity>,
+    currentSong: AudioEntity?,
+    isPlaying: Boolean,
+    onSongClick: (AudioEntity) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 8.dp)
+    ) {
+        Text(
+            text = "Keep listening",
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+        )
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(songs, key = { "listen_${it.id}" }) { song ->
+                val isSongActive = currentSong?.id == song.id
+                val isTrackPlaying = isSongActive && isPlaying
+
+                KeepListeningCard(
+                    song = song,
+                    isPlaying = isTrackPlaying,
+                    onClick = { onSongClick(song) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun KeepListeningCard(
+    song: AudioEntity,
+    isPlaying: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .width(220.dp)
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        color = lerp(
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.surfaceVariant,
+            0.5f
+        ),
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!song.albumArtUri.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(song.albumArtUri)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = song.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = song.artist,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// 4. Scanned Song List Item (Standard Opaque Row for LazyColumn)
+// -------------------------------------------------------------------------
 
 @Composable
 fun ScannedSongListItemContent(
@@ -456,6 +831,10 @@ fun ScannedSongListItemContent(
         }
     }
 }
+
+// -------------------------------------------------------------------------
+// Helper & Placeholder Cards
+// -------------------------------------------------------------------------
 
 @Composable
 fun PermissionRequestCard(

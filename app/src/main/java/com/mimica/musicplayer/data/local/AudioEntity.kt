@@ -14,7 +14,10 @@ data class AudioEntity(
     val duration: Long,
     val filePath: String,
     val albumArtUri: String? = null,
-    val albumId: Long = 0L
+    val albumId: Long = 0L,
+    val plays: Int = 0,
+    val lastPlayed: Long = 0L,
+    val totalTime: Long = 0L
 ) {
     val durationFormatted: String
         get() {

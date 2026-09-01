@@ -17,6 +17,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,23 +33,35 @@ import com.mimica.musicplayer.ui.components.NowPlayingBottomSheet
 import com.mimica.musicplayer.ui.navigation.Screen
 import com.mimica.musicplayer.ui.screens.HomeScreen
 import com.mimica.musicplayer.ui.screens.LibraryScreen
+import com.mimica.musicplayer.ui.screens.NotificationScreen
+import com.mimica.musicplayer.ui.screens.NotificationSettingsScreen
 import com.mimica.musicplayer.ui.screens.SearchScreen
+import com.mimica.musicplayer.ui.screens.SettingsScreen
+import com.mimica.musicplayer.ui.screens.StatsScreen
 import com.mimica.musicplayer.ui.theme.AppTheme
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
+import com.mimica.musicplayer.ui.viewmodel.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
 
     private val playerViewModel: PlayerViewModel by viewModels()
+    private val settingsViewModel: SettingsViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            AppTheme {
+            val userSettings by settingsViewModel.settings.collectAsState()
+
+            AppTheme(
+                themeMode = userSettings.themeMode,
+                dynamicColor = userSettings.dynamicTheming
+            ) {
                 val navController = rememberNavController()
                 MusicPlayerApp(
                     navController = navController,
-                    playerViewModel = playerViewModel
+                    playerViewModel = playerViewModel,
+                    settingsViewModel = settingsViewModel
                 )
             }
         }
@@ -58,7 +71,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MusicPlayerApp(
     navController: NavHostController = rememberNavController(),
-    playerViewModel: PlayerViewModel
+    playerViewModel: PlayerViewModel,
+    settingsViewModel: SettingsViewModel
 ) {
     val context = LocalContext.current
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -97,6 +111,12 @@ fun MusicPlayerApp(
                     composable(Screen.Home.route) {
                         HomeScreen(
                             playerViewModel = playerViewModel,
+                            onStatsClick = {
+                                navController.navigate(Screen.Stats.route)
+                            },
+                            onSettingsClick = {
+                                navController.navigate(Screen.Settings.route)
+                            },
                             onAudioClick = { audio, playlist ->
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -127,6 +147,40 @@ fun MusicPlayerApp(
                                 } else {
                                     playerViewModel.play(audio, playlist)
                                 }
+                            }
+                        )
+                    }
+                    composable(Screen.Settings.route) {
+                        SettingsScreen(
+                            settingsViewModel = settingsViewModel,
+                            onBackClick = {
+                                navController.popBackStack()
+                            },
+                            onNotificationsClick = {
+                                navController.navigate(Screen.NotificationSettings.route)
+                            }
+                        )
+                    }
+                    composable(Screen.NotificationSettings.route) {
+                        NotificationSettingsScreen(
+                            onBackClick = {
+                                navController.popBackStack()
+                            }
+                        )
+                    }
+                    composable(Screen.Notifications.route) {
+                        NotificationScreen(
+                            playerViewModel = playerViewModel,
+                            onBackClick = {
+                                navController.popBackStack()
+                            }
+                        )
+                    }
+                    composable(Screen.Stats.route) {
+                        StatsScreen(
+                            playerViewModel = playerViewModel,
+                            onBackClick = {
+                                navController.popBackStack()
                             }
                         )
                     }

@@ -167,6 +167,9 @@ public final class PlaylistSongDao_Impl implements PlaylistSongDao {
           final int _cursorIndexOfFilePath = CursorUtil.getColumnIndexOrThrow(_cursor, "filePath");
           final int _cursorIndexOfAlbumArtUri = CursorUtil.getColumnIndexOrThrow(_cursor, "albumArtUri");
           final int _cursorIndexOfAlbumId = CursorUtil.getColumnIndexOrThrow(_cursor, "albumId");
+          final int _cursorIndexOfPlays = CursorUtil.getColumnIndexOrThrow(_cursor, "plays");
+          final int _cursorIndexOfLastPlayed = CursorUtil.getColumnIndexOrThrow(_cursor, "lastPlayed");
+          final int _cursorIndexOfTotalTime = CursorUtil.getColumnIndexOrThrow(_cursor, "totalTime");
           final List<AudioEntity> _result = new ArrayList<AudioEntity>(_cursor.getCount());
           while (_cursor.moveToNext()) {
             final AudioEntity _item;
@@ -190,7 +193,13 @@ public final class PlaylistSongDao_Impl implements PlaylistSongDao {
             }
             final long _tmpAlbumId;
             _tmpAlbumId = _cursor.getLong(_cursorIndexOfAlbumId);
-            _item = new AudioEntity(_tmpId,_tmpTitle,_tmpArtist,_tmpAlbum,_tmpDuration,_tmpFilePath,_tmpAlbumArtUri,_tmpAlbumId);
+            final int _tmpPlays;
+            _tmpPlays = _cursor.getInt(_cursorIndexOfPlays);
+            final long _tmpLastPlayed;
+            _tmpLastPlayed = _cursor.getLong(_cursorIndexOfLastPlayed);
+            final long _tmpTotalTime;
+            _tmpTotalTime = _cursor.getLong(_cursorIndexOfTotalTime);
+            _item = new AudioEntity(_tmpId,_tmpTitle,_tmpArtist,_tmpAlbum,_tmpDuration,_tmpFilePath,_tmpAlbumArtUri,_tmpAlbumId,_tmpPlays,_tmpLastPlayed,_tmpTotalTime);
             _result.add(_item);
           }
           return _result;
@@ -228,6 +237,9 @@ public final class PlaylistSongDao_Impl implements PlaylistSongDao {
           final int _cursorIndexOfFilePath = CursorUtil.getColumnIndexOrThrow(_cursor, "filePath");
           final int _cursorIndexOfAlbumArtUri = CursorUtil.getColumnIndexOrThrow(_cursor, "albumArtUri");
           final int _cursorIndexOfAlbumId = CursorUtil.getColumnIndexOrThrow(_cursor, "albumId");
+          final int _cursorIndexOfPlays = CursorUtil.getColumnIndexOrThrow(_cursor, "plays");
+          final int _cursorIndexOfLastPlayed = CursorUtil.getColumnIndexOrThrow(_cursor, "lastPlayed");
+          final int _cursorIndexOfTotalTime = CursorUtil.getColumnIndexOrThrow(_cursor, "totalTime");
           final List<AudioEntity> _result = new ArrayList<AudioEntity>(_cursor.getCount());
           while (_cursor.moveToNext()) {
             final AudioEntity _item;
@@ -251,7 +263,13 @@ public final class PlaylistSongDao_Impl implements PlaylistSongDao {
             }
             final long _tmpAlbumId;
             _tmpAlbumId = _cursor.getLong(_cursorIndexOfAlbumId);
-            _item = new AudioEntity(_tmpId,_tmpTitle,_tmpArtist,_tmpAlbum,_tmpDuration,_tmpFilePath,_tmpAlbumArtUri,_tmpAlbumId);
+            final int _tmpPlays;
+            _tmpPlays = _cursor.getInt(_cursorIndexOfPlays);
+            final long _tmpLastPlayed;
+            _tmpLastPlayed = _cursor.getLong(_cursorIndexOfLastPlayed);
+            final long _tmpTotalTime;
+            _tmpTotalTime = _cursor.getLong(_cursorIndexOfTotalTime);
+            _item = new AudioEntity(_tmpId,_tmpTitle,_tmpArtist,_tmpAlbum,_tmpDuration,_tmpFilePath,_tmpAlbumArtUri,_tmpAlbumId,_tmpPlays,_tmpLastPlayed,_tmpTotalTime);
             _result.add(_item);
           }
           return _result;

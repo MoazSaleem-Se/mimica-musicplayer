@@ -36,8 +36,12 @@ Generated on 2026-08-31 based on source analysis of the repository.
     - `AnimatedScaleIconButton`: Interactive button with press scale spring animation.
 - **`ui/navigation/`**:
   - `Screen.kt`: Sealed class defining navigation destinations (`Home`, `Search`, `Library`, `Player`) with title and Material icons.
-- **`ui/screens/`**:
-  - `HomeScreen.kt`: Scans device storage with runtime permission checking (`READ_MEDIA_AUDIO` + `POST_NOTIFICATIONS` on API 33+, `READ_EXTERNAL_STORAGE` on API <33). Displays scanned song list with shimmer loading, permission request, empty state, and **SwipeToDismissBox** gesture (Swipe Left to Add to Playlist).
+  - `HomeScreen.kt`: Modern YouTube/Spotify style streaming home screen without filter chips. Features:
+    - Dynamic greeting header ("Good morning", "Good afternoon", "Good evening") with Rescan, Notifications, and Settings action buttons.
+    - **Quick picks** horizontal carousel with 160dp cards, rounded corners, album artwork, dark gradient overlays, and live play/pause badges.
+    - **Keep listening** section featuring 48dp compact cards with quick playback controls.
+    - **All Songs (X)** section with `SwipeToDismissBox` (Swipe Left to Add to Playlist), solid `lerp` opaque background, and active play/pause indicators.
+    - Shimmer loading state, empty state, and runtime storage/notification permission flow.
   - `SearchScreen.kt`: Real-time search UI over scanned local tracks (filtering title, artist, album) with genre quick tags, category browse cards, and **SwipeToDismissBox** gesture (Swipe Left to Add to Playlist).
   - `LibraryScreen.kt`: Real library browser with category tabs ("All Tracks", "Playlists", "Artists", "Albums"). Provides inline playlist creation, navigation to `PlaylistDetailScreen`, and **SwipeToDismissBox** gesture on tracks.
   - `PlaylistDetailScreen.kt`: Full detail view for playlists showing track list, total runtime, "Play All" button, **SwipeToDismissBox** gestures (Swipe Left to Add to Another Playlist, Swipe Right to Remove from Playlist), and playlist deletion.
@@ -159,10 +163,20 @@ Verified from `gradle/libs.versions.toml` and `app/build.gradle.kts`:
 
 ---
 
+### 2. Comprehensive Settings Page & DataStore Integration
+- **`data/preferences/SettingsDataStore.kt`**: Persistent key-value storage using Jetpack DataStore Preferences managing crossfade duration, gapless playback, playback speed, volume normalization, equalizer preset, bass boost, virtualizer, theme mode (System/Light/Dark), dynamic theming, accent colors, startup library scan, excluded folders, queue settings, notification style, lock screen controls, and headset auto-play/pause.
+- **`ui/viewmodel/SettingsViewModel.kt` & `NotificationSettingsViewModel.kt`**: `AndroidViewModel`s exposing `StateFlow<UserSettings>` and updater methods.
+- **`ui/screens/SettingsScreen.kt`, `NotificationSettingsScreen.kt`, `NotificationScreen.kt` & `StatsScreen.kt`**: Material 3 settings, stats, and status screens with Scaffold TopAppBar, categorized section cards, permission status checks, switches, dropdowns, listening time, bar charts, artist breakdown percentages, and test notification dispatch.
+- **`ui/viewmodel/StatsViewModel.kt` & `PlayerViewModel.kt`**: Real-time stats aggregation across time intervals ("Continuous", "1 week", "1 month", "3 months") and automatic play count/listening time increments upon track playback.
+- **Room Database Migration (v3)**: Added `plays`, `lastPlayed`, and `totalTime` columns to `audio` table with `MIGRATION_2_3`.
+- **Navigation Integration**: Linked via `Screen.Settings`, `Screen.NotificationSettings`, `Screen.Notifications`, and `Screen.Stats` routes, header settings and stats icons in `HomeScreen`, and NavHost in `MainActivity`.
+
+---
+
 ## 6. Recent Fixes & Features
 
 ### 1. Gesture Support Across Music Player
-- **Mini Player Horizontal Swipe**: Added horizontal drag gestures with ~100dp threshold to skip tracks (Swipe Left $ightarrow$ Next, Swipe Right $ightarrow$ Previous) with spring physics and non-blocking tap-to-expand.
+- **Mini Player Horizontal Swipe**: Added horizontal drag gestures with ~100dp threshold to skip tracks (Swipe Left $\rightarrow$ Next, Swipe Right $\rightarrow$ Previous) with spring physics and non-blocking tap-to-expand.
 - **Full Player Swipe-Down to Collapse**: Added vertical drag gestures with ~150dp threshold on Album Art card to collapse player smoothly without conflicting with bottom sheet content.
 - **Song List Swipe Actions**: Integrated `SwipeToDismissBox` across `HomeScreen`, `SearchScreen`, `LibraryScreen`, and `PlaylistDetailScreen`:
   - Swipe Left (All Screens): Opens "Add to Playlist" dialog.

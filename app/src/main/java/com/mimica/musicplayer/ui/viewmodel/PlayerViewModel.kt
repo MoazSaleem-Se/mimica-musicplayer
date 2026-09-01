@@ -17,6 +17,7 @@ import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import com.mimica.musicplayer.data.local.AppDatabase
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.playback.MusicPlayerService
 import com.mimica.musicplayer.utils.ColorExtractor
@@ -44,6 +45,8 @@ data class PlayerUiState(
 
 @OptIn(UnstableApi::class)
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val audioDao = AppDatabase.getDatabase(application).audioDao()
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
@@ -259,6 +262,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _duration.value = song.duration
         _playbackError.value = null
         startProgressTracker()
+
+        viewModelScope.launch(Dispatchers.IO) {
+            audioDao.incrementStats(song.id, System.currentTimeMillis(), song.duration)
+        }
     }
 
     fun setSleepTimer(minutes: Int) {
