@@ -1,6 +1,7 @@
 package com.mimica.musicplayer
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -58,6 +60,7 @@ fun MusicPlayerApp(
     navController: NavHostController = rememberNavController(),
     playerViewModel: PlayerViewModel
 ) {
+    val context = LocalContext.current
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
@@ -94,39 +97,33 @@ fun MusicPlayerApp(
                     composable(Screen.Home.route) {
                         HomeScreen(
                             onAudioClick = { audio, playlist ->
-                                playerViewModel.play(audio, playlist)
+                                if (audio.filePath.isBlank()) {
+                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    playerViewModel.play(audio, playlist)
+                                }
                             }
                         )
                     }
                     composable(Screen.Search.route) {
                         SearchScreen(
-                            onSongClick = { song ->
-                                val audio = AudioEntity(
-                                    id = song.id.hashCode().toLong(),
-                                    title = song.title,
-                                    artist = song.artist,
-                                    album = song.album,
-                                    duration = song.durationMs,
-                                    filePath = "",
-                                    albumArtUri = song.artworkUrl
-                                )
-                                playerViewModel.play(audio, listOf(audio))
+                            onAudioClick = { audio, playlist ->
+                                if (audio.filePath.isBlank()) {
+                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    playerViewModel.play(audio, playlist)
+                                }
                             }
                         )
                     }
                     composable(Screen.Library.route) {
                         LibraryScreen(
-                            onSongClick = { song ->
-                                val audio = AudioEntity(
-                                    id = song.id.hashCode().toLong(),
-                                    title = song.title,
-                                    artist = song.artist,
-                                    album = song.album,
-                                    duration = song.durationMs,
-                                    filePath = "",
-                                    albumArtUri = ""
-                                )
-                                playerViewModel.play(audio, listOf(audio))
+                            onAudioClick = { audio, playlist ->
+                                if (audio.filePath.isBlank()) {
+                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    playerViewModel.play(audio, playlist)
+                                }
                             }
                         )
                     }

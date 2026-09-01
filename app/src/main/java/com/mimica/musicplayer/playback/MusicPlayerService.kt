@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -30,7 +31,7 @@ class MusicPlayerService : MediaSessionService() {
         val renderersFactory = DefaultRenderersFactory(this)
 
         player = ExoPlayer.Builder(this, renderersFactory)
-            .setAudioAttributes(audioAttributes, true /* handleAudioFocus */)
+            .setAudioAttributes(audioAttributes, true /* handleAudioFocus: pauses on incoming call, resumes after */)
             .setHandleAudioBecomingNoisy(true) // Pauses automatically on headset/Bluetooth disconnection
             .build()
 
@@ -54,8 +55,8 @@ class MusicPlayerService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // If player is not playing, stop the foreground service
-        if (!player.playWhenReady || player.mediaItemCount == 0) {
+        // If player is not playing or has no active playback, stop the foreground service
+        if (!player.playWhenReady || player.mediaItemCount == 0 || player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
             stopSelf()
         }
     }
@@ -69,5 +70,17 @@ class MusicPlayerService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private inner class MediaSessionCallback : MediaSession.Callback
+    private inner class MediaSessionCallback : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val connectionResult = super.onConnect(session, controller)
+            val availableSessionCommands = connectionResult.availableSessionCommands.buildUpon()
+            return MediaSession.ConnectionResult.accept(
+                availableSessionCommands.build(),
+                connectionResult.availablePlayerCommands
+            )
+        }
+    }
 }

@@ -1,8 +1,11 @@
 package com.mimica.musicplayer.ui.components
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.media.AudioManager
+import android.media.audiofx.AudioEffect
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -25,6 +28,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -38,43 +42,54 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -101,11 +116,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
+import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -126,6 +143,7 @@ fun NowPlayingBottomSheet(
     val playbackError by playerViewModel.playbackError.collectAsState()
     val uiState by playerViewModel.uiState.collectAsState()
     val albumPalette by playerViewModel.albumPalette.collectAsState()
+    val sleepTimerMinutes by playerViewModel.sleepTimerMinutes.collectAsState()
 
     val coroutineScope = rememberCoroutineScope()
     var isExpanded by remember { mutableStateOf(false) }
@@ -190,6 +208,7 @@ fun NowPlayingBottomSheet(
                 currentPlaylist = currentPlaylist,
                 playbackError = playbackError,
                 palette = albumPalette,
+                activeSleepTimerMinutes = sleepTimerMinutes,
                 onPlayPauseClick = { playerViewModel.togglePlayPause() },
                 onNextClick = { playerViewModel.skipToNext() },
                 onPreviousClick = { playerViewModel.skipToPrevious() },
@@ -197,6 +216,8 @@ fun NowPlayingBottomSheet(
                 onRepeatClick = { playerViewModel.toggleRepeat() },
                 onFavoriteClick = { playerViewModel.toggleFavorite() },
                 onSeek = { targetMs -> playerViewModel.seekTo(targetMs) },
+                onSetSleepTimer = { minutes -> playerViewModel.setSleepTimer(minutes) },
+                onPlayTrack = { track -> playerViewModel.play(track, currentPlaylist) },
                 onCollapse = {
                     coroutineScope.launch {
                         sheetState.hide()
@@ -251,7 +272,6 @@ fun MiniPlayerContent(
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Album Art Thumbnail (Coil)
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -288,7 +308,6 @@ fun MiniPlayerContent(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // Song Title & Artist
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = song.title,
@@ -308,7 +327,6 @@ fun MiniPlayerContent(
                     )
                 }
 
-                // Play/Pause Action Button with Dynamic Color
                 FilledIconButton(
                     onClick = onPlayPauseClick,
                     modifier = Modifier.size(40.dp),
@@ -333,7 +351,6 @@ fun MiniPlayerContent(
                     }
                 }
 
-                // Skip Next Button
                 IconButton(
                     onClick = onNextClick,
                     modifier = Modifier.size(36.dp)
@@ -346,7 +363,6 @@ fun MiniPlayerContent(
                 }
             }
 
-            // Progress Indicator at Bottom Edge of MiniPlayer
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
@@ -371,6 +387,8 @@ fun FullPlayerContent(
     currentPlaylist: List<AudioEntity> = emptyList(),
     playbackError: String? = null,
     palette: Palette?,
+    activeSleepTimerMinutes: Int? = null,
+    playlistViewModel: PlaylistViewModel = viewModel(),
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -378,13 +396,19 @@ fun FullPlayerContent(
     onRepeatClick: () -> Unit,
     onFavoriteClick: () -> Unit,
     onSeek: (Long) -> Unit,
+    onSetSleepTimer: (Int) -> Unit,
+    onPlayTrack: (AudioEntity) -> Unit,
     onCollapse: () -> Unit,
     onImageLoaded: (android.graphics.Bitmap) -> Unit = {}
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
 
-    // Volume Manager
+    var showPlaylistDialog by remember { mutableStateOf(false) }
+    var showArtistDialog by remember { mutableStateOf(false) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var showEqualizerDialog by remember { mutableStateOf(false) }
+
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
     val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
     var currentVolume by remember {
@@ -393,7 +417,6 @@ fun FullPlayerContent(
         )
     }
 
-    // Dynamic Colors calculation with Material3 fallbacks
     val defaultDarkBg = Color(0xFF1E1A26)
     val defaultBottomBg = Color(0xFF110E17)
     val defaultOnBg = MaterialTheme.colorScheme.onBackground
@@ -442,7 +465,6 @@ fun FullPlayerContent(
         } ?: defaultPrimary
     }
 
-    // 400ms Animated Color Transitions
     val animatedBgTop by animateColorAsState(targetBgTop, tween(400), label = "BgTop")
     val animatedBgBottom by animateColorAsState(targetBgBottom, tween(400), label = "BgBottom")
     val animatedTitleColor by animateColorAsState(targetTitleColor, tween(400), label = "TitleColor")
@@ -484,7 +506,7 @@ fun FullPlayerContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. TOP BAR (Collapse button, Source Label, and More Options Menu)
+        // 1. TOP BAR
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -539,28 +561,43 @@ fun FullPlayerContent(
                         leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
                         onClick = {
                             showMenu = false
-                            Toast.makeText(context, "Added to playlist", Toast.LENGTH_SHORT).show()
+                            showPlaylistDialog = true
                         }
                     )
                     DropdownMenuItem(
                         text = { Text("View Artist: ${song.artist}") },
-                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                        onClick = { showMenu = false }
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            showArtistDialog = true
+                        }
                     )
                     DropdownMenuItem(
                         text = { Text("Share Track") },
                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
                         onClick = {
                             showMenu = false
-                            Toast.makeText(context, "Sharing ${song.title}", Toast.LENGTH_SHORT).show()
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "Listening to ${song.title}")
+                                putExtra(
+                                    Intent.EXTRA_TEXT,
+                                    "Now playing: \"${song.title}\" by ${song.artist} on Mimica Music Player 🎵"
+                                )
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Sleep Timer") },
+                        text = {
+                            Text(
+                                if (activeSleepTimerMinutes != null) "Sleep Timer: ${activeSleepTimerMinutes}m left" else "Sleep Timer"
+                            )
+                        },
                         leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null) },
                         onClick = {
                             showMenu = false
-                            Toast.makeText(context, "Sleep timer set to 30 min", Toast.LENGTH_SHORT).show()
+                            showSleepTimerDialog = true
                         }
                     )
                     DropdownMenuItem(
@@ -568,7 +605,15 @@ fun FullPlayerContent(
                         leadingIcon = { Icon(Icons.Default.Equalizer, contentDescription = null) },
                         onClick = {
                             showMenu = false
-                            Toast.makeText(context, "Equalizer opened", Toast.LENGTH_SHORT).show()
+                            try {
+                                val eqIntent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
+                                    putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                                    putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+                                }
+                                context.startActivity(eqIntent)
+                            } catch (e: ActivityNotFoundException) {
+                                showEqualizerDialog = true
+                            }
                         }
                     )
                 }
@@ -577,7 +622,7 @@ fun FullPlayerContent(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. LARGE ALBUM ART SECTION (68% width, 24dp rounded corners, shadow, gradient overlay)
+        // 2. LARGE ALBUM ART SECTION
         AnimatedContent(
             targetState = song.id,
             transitionSpec = {
@@ -630,7 +675,6 @@ fun FullPlayerContent(
                         )
                     }
 
-                    // Subtle bottom gradient overlay on artwork for depth
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -648,7 +692,7 @@ fun FullPlayerContent(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 3. SONG INFO SECTION (headlineSmall bold title, titleMedium artist)
+        // 3. SONG INFO SECTION
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -677,7 +721,6 @@ fun FullPlayerContent(
             )
         }
 
-        // Error message if any
         if (playbackError != null) {
             Text(
                 text = playbackError,
@@ -689,7 +732,7 @@ fun FullPlayerContent(
             )
         }
 
-        // 4. SEEK BAR SECTION (Slider with active/inactive track & timestamps)
+        // 4. SEEK BAR SECTION
         Column(modifier = Modifier.fillMaxWidth()) {
             Slider(
                 value = progressFraction,
@@ -731,7 +774,7 @@ fun FullPlayerContent(
             }
         }
 
-        // 5. PLAYBACK CONTROLS (Shuffle | Previous | Play/Pause 72dp | Next | Repeat)
+        // 5. PLAYBACK CONTROLS
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -739,7 +782,6 @@ fun FullPlayerContent(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Shuffle
             AnimatedScaleIconButton(
                 onClick = onShuffleClick,
                 size = 46.dp
@@ -752,7 +794,6 @@ fun FullPlayerContent(
                 )
             }
 
-            // Previous
             AnimatedScaleIconButton(
                 onClick = onPreviousClick,
                 size = 52.dp
@@ -765,7 +806,6 @@ fun FullPlayerContent(
                 )
             }
 
-            // Play / Pause: 72dp with Vibrant to Light Vibrant Gradient
             Surface(
                 onClick = onPlayPauseClick,
                 modifier = Modifier
@@ -798,7 +838,6 @@ fun FullPlayerContent(
                 }
             }
 
-            // Next
             AnimatedScaleIconButton(
                 onClick = onNextClick,
                 size = 52.dp
@@ -811,7 +850,6 @@ fun FullPlayerContent(
                 )
             }
 
-            // Repeat
             AnimatedScaleIconButton(
                 onClick = onRepeatClick,
                 size = 46.dp
@@ -825,14 +863,13 @@ fun FullPlayerContent(
             }
         }
 
-        // 6. VOLUME CONTROL & UP NEXT ROW
+        // 6. VOLUME SLIDER & UP NEXT ROW
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Volume Slider Row with Favorite Action
             Row(
                 modifier = Modifier.fillMaxWidth(0.94f),
                 verticalAlignment = Alignment.CenterVertically,
@@ -877,7 +914,6 @@ fun FullPlayerContent(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Up Next Queue Info
             if (nextSong != null) {
                 Text(
                     text = "Up Next: ${nextSong.title} • ${nextSong.artist}",
@@ -889,6 +925,460 @@ fun FullPlayerContent(
             }
         }
     }
+
+    // 1. Add to Playlist Dialog (Connected to real Room playlists)
+    if (showPlaylistDialog) {
+        AddToPlaylistDialog(
+            song = song,
+            playlistViewModel = playlistViewModel,
+            onDismiss = { showPlaylistDialog = false }
+        )
+    }
+
+    // 2. View Artist Songs Dialog
+    if (showArtistDialog) {
+        val artistTracks = remember(currentPlaylist, song) {
+            val matching = currentPlaylist.filter { it.artist.equals(song.artist, ignoreCase = true) }
+            if (matching.isNotEmpty()) matching else listOf(song)
+        }
+        ArtistSongsDialog(
+            artistName = song.artist,
+            artistTracks = artistTracks,
+            onDismiss = { showArtistDialog = false },
+            onTrackClick = { selectedTrack ->
+                showArtistDialog = false
+                onPlayTrack(selectedTrack)
+            }
+        )
+    }
+
+    // 3. Sleep Timer Dialog
+    if (showSleepTimerDialog) {
+        SleepTimerDialog(
+            currentTimerMinutes = activeSleepTimerMinutes,
+            onDismiss = { showSleepTimerDialog = false },
+            onSetTimer = { minutes ->
+                showSleepTimerDialog = false
+                onSetSleepTimer(minutes)
+                if (minutes > 0) {
+                    Toast.makeText(context, "Sleep timer set for $minutes minutes", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Sleep timer cancelled", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    // 4. In-App Equalizer Dialog
+    if (showEqualizerDialog) {
+        EqualizerDialog(
+            onDismiss = { showEqualizerDialog = false },
+            onApply = {
+                showEqualizerDialog = false
+                Toast.makeText(context, "Equalizer settings applied", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+}
+
+// -------------------------------------------------------------
+// DIALOG COMPOSABLES
+// -------------------------------------------------------------
+
+@Composable
+fun AddToPlaylistDialog(
+    song: AudioEntity,
+    playlistViewModel: PlaylistViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val playlists by playlistViewModel.playlists.collectAsState()
+    var newPlaylistName by remember { mutableStateOf("") }
+    var isCreatingNew by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        title = { Text("Add to Playlist", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (playlists.isEmpty()) {
+                    Text(
+                        text = "No custom playlists found. Create one below!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                    ) {
+                        items(playlists, key = { it.id }) { pl ->
+                            Surface(
+                                onClick = {
+                                    playlistViewModel.addSongToPlaylist(pl.id, song.id) {
+                                        Toast.makeText(context, "Added '${song.title}' to ${pl.name}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    onDismiss()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.QueueMusic,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = pl.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "${pl.songCount} songs",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                if (isCreatingNew) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newPlaylistName,
+                            onValueChange = { newPlaylistName = it },
+                            placeholder = { Text("Playlist name") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (newPlaylistName.isNotBlank()) {
+                                    playlistViewModel.createPlaylist(newPlaylistName) { newId ->
+                                        playlistViewModel.addSongToPlaylist(newId, song.id) {
+                                            Toast.makeText(context, "Created '${newPlaylistName.trim()}' and added song", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    onDismiss()
+                                }
+                            }
+                        ) {
+                            Text("Add")
+                        }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { isCreatingNew = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("New Playlist")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ArtistSongsDialog(
+    artistName: String,
+    artistTracks: List<AudioEntity>,
+    onDismiss: () -> Unit,
+    onTrackClick: (AudioEntity) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        title = {
+            Text(
+                text = "Artist: $artistName",
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "${artistTracks.size} tracks by $artistName",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp)
+                ) {
+                    items(artistTracks, key = { it.id }) { track ->
+                        Surface(
+                            onClick = { onTrackClick(track) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (!track.albumArtUri.isNullOrEmpty()) {
+                                        AsyncImage(
+                                            model = ImageRequest.Builder(LocalContext.current)
+                                                .data(track.albumArtUri)
+                                                .crossfade(true)
+                                                .build(),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.matchParentSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.MusicNote,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = track.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = track.album,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = track.durationFormatted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+fun SleepTimerDialog(
+    currentTimerMinutes: Int?,
+    onDismiss: () -> Unit,
+    onSetTimer: (Int) -> Unit
+) {
+    val timerOptions = listOf(15, 30, 45, 60)
+    var selectedOption by remember { mutableStateOf(currentTimerMinutes ?: 30) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(Icons.Default.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        title = { Text("Set Sleep Timer", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (currentTimerMinutes != null) "Active: $currentTimerMinutes minutes left" else "Playback will automatically pause after the timer ends.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                timerOptions.forEach { minutes ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedOption = minutes }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedOption == minutes,
+                            onClick = { selectedOption = minutes }
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "$minutes minutes",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (selectedOption == minutes) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+
+                if (currentTimerMinutes != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { onSetTimer(0) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Turn Off Sleep Timer")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSetTimer(selectedOption) }) {
+                Text("Start Timer")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun EqualizerDialog(
+    onDismiss: () -> Unit,
+    onApply: () -> Unit
+) {
+    var bassBoost by remember { mutableFloatStateOf(0.4f) }
+    var virtualizer by remember { mutableFloatStateOf(0.3f) }
+    var selectedPreset by remember { mutableStateOf("Rock") }
+
+    val presets = listOf("Flat", "Bass Boost", "Vocal", "Rock", "Electronic")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(Icons.Default.Equalizer, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        },
+        title = { Text("Equalizer", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(320.dp)
+            ) {
+                Text("Presets", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    presets.take(3).forEach { preset ->
+                        FilterChip(
+                            selected = selectedPreset == preset,
+                            onClick = { selectedPreset = preset },
+                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text("Bass Boost: ${(bassBoost * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Slider(
+                    value = bassBoost,
+                    onValueChange = { bassBoost = it },
+                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
+                )
+
+                Text("Virtualizer (Surround): ${(virtualizer * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Slider(
+                    value = virtualizer,
+                    onValueChange = { virtualizer = it },
+                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("5-Band EQ (60Hz • 230Hz • 910Hz • 3.6kHz • 14kHz)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LinearProgressIndicator(
+                    progress = { 0.7f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onApply) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 @Composable

@@ -1,5 +1,6 @@
 package com.mimica.musicplayer.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -38,6 +40,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,11 +53,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.mimica.musicplayer.model.Song
+import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
+import com.mimica.musicplayer.ui.viewmodel.ScanUiState
 
 data class GenreCategory(
     val id: String,
@@ -64,8 +71,19 @@ data class GenreCategory(
 
 @Composable
 fun SearchScreen(
-    onSongClick: (Song) -> Unit = {}
+    onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit = { _, _ -> },
+    scanViewModel: MusicScanViewModel = viewModel()
 ) {
+    val context = LocalContext.current
+    val scanState by scanViewModel.scanState.collectAsState()
+
+    val allLocalSongs: List<AudioEntity> = remember(scanState) {
+        when (val state = scanState) {
+            is ScanUiState.Success -> state.songs
+            else -> emptyList()
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedTag by remember { mutableStateOf("All") }
 
@@ -82,10 +100,26 @@ fun SearchScreen(
         GenreCategory("8", "Classical", listOf(Color(0xFF795548), Color(0xFF4E342E)))
     )
 
-    val sampleSearchResults = listOf(
-        Song("s1", "Retro City Lights", "Cyber Sound", "Synth Realm", "", "3:20", 200000L),
-        Song("s2", "Sunset Boulevard", "Golden Glow", "Summer Waves", "", "4:02", 242000L)
-    )
+    // Filter real local songs based on query and tag
+    val filteredSongs = remember(searchQuery, selectedTag, allLocalSongs) {
+        if (searchQuery.isBlank() && selectedTag == "All") {
+            emptyList()
+        } else {
+            allLocalSongs.filter { song ->
+                val matchesQuery = searchQuery.isBlank() ||
+                        song.title.contains(searchQuery, ignoreCase = true) ||
+                        song.artist.contains(searchQuery, ignoreCase = true) ||
+                        song.album.contains(searchQuery, ignoreCase = true)
+
+                val matchesTag = selectedTag == "All" ||
+                        song.title.contains(selectedTag, ignoreCase = true) ||
+                        song.artist.contains(selectedTag, ignoreCase = true) ||
+                        song.album.contains(selectedTag, ignoreCase = true)
+
+                matchesQuery && matchesTag
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -151,7 +185,9 @@ fun SearchScreen(
             items(tags) { tag ->
                 FilterChip(
                     selected = selectedTag == tag,
-                    onClick = { selectedTag = tag },
+                    onClick = {
+                        selectedTag = if (selectedTag == tag && tag != "All") "All" else tag
+                    },
                     label = { Text(text = tag) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -164,26 +200,67 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (searchQuery.isNotEmpty()) {
-            Text(
-                text = "Results",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 20.dp),
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            LazyColumn(
-                contentPadding = PaddingValues(bottom = 96.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(sampleSearchResults) { song ->
-                    SongListItem(
-                        song = song,
-                        onClick = { onSongClick(song) }
+        val isFiltering = searchQuery.isNotBlank() || selectedTag != "All"
+
+        if (isFiltering) {
+            if (filteredSongs.isNotEmpty()) {
+                Text(
+                    text = "Results (${filteredSongs.size} tracks found)",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(
+                    contentPadding = PaddingValues(bottom = 96.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(filteredSongs, key = { it.id }) { audio ->
+                        SearchSongListItem(
+                            audio = audio,
+                            onClick = {
+                                if (audio.filePath.isBlank()) {
+                                    Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    onAudioClick(audio, filteredSongs)
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                // No local results found
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp, vertical = 40.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SearchOff,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No matching songs in library",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Try searching with a different keyword or check your scanned local files.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         } else {
+            // Default Browse Categories Grid
             Text(
                 text = "Browse Categories",
                 style = MaterialTheme.typography.titleMedium,
@@ -193,7 +270,6 @@ fun SearchScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Categories Grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 96.dp),
@@ -202,7 +278,12 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(categories) { category ->
-                    CategoryGridCard(category = category)
+                    CategoryGridCard(
+                        category = category,
+                        onClick = {
+                            selectedTag = category.title.split(" ")[0]
+                        }
+                    )
                 }
             }
         }
@@ -212,12 +293,13 @@ fun SearchScreen(
 @Composable
 fun CategoryGridCard(
     category: GenreCategory,
+    onClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .height(100.dp)
-            .clickable { /* Handle category click */ },
+            .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
@@ -239,8 +321,8 @@ fun CategoryGridCard(
 }
 
 @Composable
-fun SongListItem(
-    song: Song,
+fun SearchSongListItem(
+    audio: AudioEntity,
     onClick: () -> Unit
 ) {
     Surface(
@@ -257,7 +339,6 @@ fun SongListItem(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Album Artwork with Coil
             Box(
                 modifier = Modifier
                     .size(54.dp)
@@ -265,13 +346,13 @@ fun SongListItem(
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (song.artworkUrl.isNotEmpty()) {
+                if (!audio.albumArtUri.isNullOrEmpty()) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(song.artworkUrl)
+                            .data(audio.albumArtUri)
                             .crossfade(true)
                             .build(),
-                        contentDescription = song.title,
+                        contentDescription = audio.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.matchParentSize()
                     )
@@ -287,10 +368,9 @@ fun SongListItem(
 
             Spacer(modifier = Modifier.width(14.dp))
 
-            // Metadata
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = song.title,
+                    text = audio.title,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -298,7 +378,7 @@ fun SongListItem(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${song.artist} • ${song.album}",
+                    text = "${audio.artist} • ${audio.album}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -308,9 +388,8 @@ fun SongListItem(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Duration
             Text(
-                text = song.duration,
+                text = audio.durationFormatted,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

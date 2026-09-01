@@ -77,23 +77,39 @@ fun HomeScreen(
     val scanState by scanViewModel.scanState.collectAsState()
     val context = LocalContext.current
 
-    val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Manifest.permission.READ_MEDIA_AUDIO
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
+    val permissionsToRequest = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(
+                Manifest.permission.READ_MEDIA_AUDIO,
+                Manifest.permission.POST_NOTIFICATIONS
+            )
+        } else {
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+        }
     }
 
     var hasPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, permissionToRequest) == PackageManager.PERMISSION_GRANTED
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+            } else {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            }
         )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasPermission = isGranted
-        if (isGranted) {
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions[Manifest.permission.READ_MEDIA_AUDIO] == true
+        } else {
+            permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        }
+        hasPermission = storageGranted
+        if (storageGranted) {
             scanViewModel.onPermissionGranted()
         } else {
             scanViewModel.onPermissionDenied()
@@ -144,104 +160,310 @@ fun HomeScreen(
                             )
                         }
                     }
-                    IconButton(onClick = {}) {
+                    IconButton(onClick = { /* Notification action */ }) {
                         Icon(
                             imageVector = Icons.Outlined.Notifications,
                             contentDescription = "Notifications",
-                            tint = MaterialTheme.colorScheme.onBackground
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = {}) {
+                    IconButton(onClick = { /* Settings action */ }) {
                         Icon(
                             imageVector = Icons.Outlined.Settings,
                             contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onBackground
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
         }
 
-        // Main Content based on Scan State & Permissions
-        when {
-            !hasPermission -> {
-                item {
-                    PermissionCard(
-                        onRequestPermission = {
-                            permissionLauncher.launch(permissionToRequest)
-                        }
-                    )
-                }
+        // Permission Card if Not Granted
+        if (!hasPermission) {
+            item {
+                PermissionRequestCard(
+                    onRequestPermission = {
+                        permissionLauncher.launch(permissionsToRequest)
+                    }
+                )
             }
-            scanState is ScanUiState.Loading -> {
+        }
+
+        // State Content
+        when (val state = scanState) {
+            is ScanUiState.Loading -> {
                 item {
-                    Text(
-                        text = "Scanning device for music files...",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Scanning device for music...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                 }
                 items(6) {
                     ShimmerSongItem()
                 }
             }
-            scanState is ScanUiState.PermissionDenied -> {
+
+            is ScanUiState.Success -> {
                 item {
-                    PermissionCard(
-                        onRequestPermission = {
-                            permissionLauncher.launch(permissionToRequest)
-                        }
+                    Text(
+                        text = "${state.songs.size} Songs Found",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                    )
+                }
+
+                items(state.songs, key = { it.id }) { audio ->
+                    ScannedSongListItem(
+                        audio = audio,
+                        onClick = { onAudioClick(audio, state.songs) }
                     )
                 }
             }
-            scanState is ScanUiState.Empty -> {
+
+            is ScanUiState.Empty -> {
                 item {
                     EmptySongsCard(
                         onRescan = { scanViewModel.scanMusic() }
                     )
                 }
             }
-            scanState is ScanUiState.Error -> {
-                val errorMsg = (scanState as ScanUiState.Error).message
+
+            is ScanUiState.PermissionDenied -> {
+                item {
+                    PermissionDeniedCard(
+                        onRequestAgain = {
+                            permissionLauncher.launch(permissionsToRequest)
+                        }
+                    )
+                }
+            }
+
+            is ScanUiState.Error -> {
                 item {
                     ErrorCard(
-                        message = errorMsg,
+                        errorMessage = state.message,
                         onRetry = { scanViewModel.scanMusic() }
                     )
                 }
             }
-            scanState is ScanUiState.Success -> {
-                val songs = (scanState as ScanUiState.Success).songs
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${songs.size} Songs found",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            text = "Tap to play",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+
+            is ScanUiState.Idle -> {
+                if (!hasPermission) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Grant storage permission to view local songs.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
+            }
+        }
+    }
+}
 
-                items(songs, key = { it.id }) { audio ->
-                    ScannedSongListItem(
-                        audio = audio,
-                        onClick = {
-                            onAudioClick(audio, songs)
-                        }
-                    )
-                }
+@Composable
+fun PermissionRequestCard(
+    onRequestPermission: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Allow Music Access",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Mimica Music Player needs access to your local audio and notifications to play your library and show media controls.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onRequestPermission,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(text = "Grant Permission")
+            }
+        }
+    }
+}
+
+@Composable
+fun PermissionDeniedCard(
+    onRequestAgain: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Permission Required",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Audio permission was denied. Please grant permission to allow scanning and playing your music.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onRequestAgain,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(text = "Try Again")
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptySongsCard(
+    onRescan: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.MusicOff,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "No Music Files Found",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Make sure audio files (> 10s) are available in your device storage.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        OutlinedButton(
+            onClick = onRescan,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = "Rescan")
+        }
+    }
+}
+
+@Composable
+fun ErrorCard(
+    errorMessage: String,
+    onRetry: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.FolderOff,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Scan Failed",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onRetry,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(text = "Retry Scan")
             }
         }
     }
@@ -266,7 +488,6 @@ fun ScannedSongListItem(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Album Artwork with Coil
             Box(
                 modifier = Modifier
                     .size(54.dp)
@@ -296,7 +517,6 @@ fun ScannedSongListItem(
 
             Spacer(modifier = Modifier.width(14.dp))
 
-            // Metadata
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = audio.title,
@@ -317,7 +537,6 @@ fun ScannedSongListItem(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Duration
             Text(
                 text = audio.durationFormatted,
                 style = MaterialTheme.typography.bodyMedium,
@@ -339,15 +558,15 @@ fun ScannedSongListItem(
 
 @Composable
 fun ShimmerSongItem() {
-    val transition = rememberInfiniteTransition(label = "Shimmer")
+    val transition = rememberInfiniteTransition(label = "shimmerTransition")
     val alpha by transition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
+        initialValue = 0.2f,
+        targetValue = 0.7f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "Alpha"
+        label = "shimmerAlpha"
     )
 
     Surface(
@@ -355,7 +574,7 @@ fun ShimmerSongItem() {
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 5.dp),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha * 0.5f)
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     ) {
         Row(
             modifier = Modifier
@@ -367,169 +586,25 @@ fun ShimmerSongItem() {
                 modifier = Modifier
                     .size(54.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
             )
-
             Spacer(modifier = Modifier.width(14.dp))
-
             Column(modifier = Modifier.weight(1f)) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.7f)
-                        .height(18.dp)
+                        .fillMaxWidth(0.65f)
+                        .height(16.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.45f)
-                        .height(14.dp)
+                        .fillMaxWidth(0.4f)
+                        .height(12.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
                 )
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
-            )
-        }
-    }
-}
-
-@Composable
-fun PermissionCard(onRequestPermission: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.FolderOff,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Audio Permission Required",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Grant access to scan and play music files saved locally on your device.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            Button(onClick = onRequestPermission) {
-                Text(text = "Grant Permission")
-            }
-        }
-    }
-}
-
-@Composable
-fun EmptySongsCard(onRescan: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                imageVector = Icons.Default.MusicOff,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "No Music Files Found",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "No audio files were detected in your device storage. Add MP3 or audio tracks and try again.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            OutlinedButton(onClick = onRescan) {
-                Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "Rescan Library")
-            }
-        }
-    }
-}
-
-@Composable
-fun ErrorCard(
-    message: String,
-    onRetry: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                imageVector = Icons.Default.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Scan Failed",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            Button(onClick = onRetry) {
-                Text(text = "Retry Scan")
             }
         }
     }

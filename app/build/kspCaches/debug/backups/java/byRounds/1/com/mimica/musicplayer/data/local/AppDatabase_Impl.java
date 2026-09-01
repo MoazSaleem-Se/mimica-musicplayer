@@ -16,6 +16,7 @@ import java.lang.Override;
 import java.lang.String;
 import java.lang.SuppressWarnings;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -28,20 +29,29 @@ import javax.annotation.processing.Generated;
 public final class AppDatabase_Impl extends AppDatabase {
   private volatile AudioDao _audioDao;
 
+  private volatile PlaylistDao _playlistDao;
+
+  private volatile PlaylistSongDao _playlistSongDao;
+
   @Override
   @NonNull
   protected SupportSQLiteOpenHelper createOpenHelper(@NonNull final DatabaseConfiguration config) {
-    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(1) {
+    final SupportSQLiteOpenHelper.Callback _openCallback = new RoomOpenHelper(config, new RoomOpenHelper.Delegate(2) {
       @Override
       public void createAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `audio` (`id` INTEGER NOT NULL, `title` TEXT NOT NULL, `artist` TEXT NOT NULL, `album` TEXT NOT NULL, `duration` INTEGER NOT NULL, `filePath` TEXT NOT NULL, `albumArtUri` TEXT, `albumId` INTEGER NOT NULL, PRIMARY KEY(`id`))");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `playlists` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `songCount` INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS `playlist_songs` (`playlistId` INTEGER NOT NULL, `songId` INTEGER NOT NULL, `position` INTEGER NOT NULL, PRIMARY KEY(`playlistId`, `songId`))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_songs_songId` ON `playlist_songs` (`songId`)");
         db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)");
-        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '726778e02b8629954c30db25c5215d54')");
+        db.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3388f31b283397832b822636bc60af33')");
       }
 
       @Override
       public void dropAllTables(@NonNull final SupportSQLiteDatabase db) {
         db.execSQL("DROP TABLE IF EXISTS `audio`");
+        db.execSQL("DROP TABLE IF EXISTS `playlists`");
+        db.execSQL("DROP TABLE IF EXISTS `playlist_songs`");
         final List<? extends RoomDatabase.Callback> _callbacks = mCallbacks;
         if (_callbacks != null) {
           for (RoomDatabase.Callback _callback : _callbacks) {
@@ -103,9 +113,37 @@ public final class AppDatabase_Impl extends AppDatabase {
                   + " Expected:\n" + _infoAudio + "\n"
                   + " Found:\n" + _existingAudio);
         }
+        final HashMap<String, TableInfo.Column> _columnsPlaylists = new HashMap<String, TableInfo.Column>(4);
+        _columnsPlaylists.put("id", new TableInfo.Column("id", "INTEGER", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPlaylists.put("name", new TableInfo.Column("name", "TEXT", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPlaylists.put("createdAt", new TableInfo.Column("createdAt", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPlaylists.put("songCount", new TableInfo.Column("songCount", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        final HashSet<TableInfo.ForeignKey> _foreignKeysPlaylists = new HashSet<TableInfo.ForeignKey>(0);
+        final HashSet<TableInfo.Index> _indicesPlaylists = new HashSet<TableInfo.Index>(0);
+        final TableInfo _infoPlaylists = new TableInfo("playlists", _columnsPlaylists, _foreignKeysPlaylists, _indicesPlaylists);
+        final TableInfo _existingPlaylists = TableInfo.read(db, "playlists");
+        if (!_infoPlaylists.equals(_existingPlaylists)) {
+          return new RoomOpenHelper.ValidationResult(false, "playlists(com.mimica.musicplayer.data.local.PlaylistEntity).\n"
+                  + " Expected:\n" + _infoPlaylists + "\n"
+                  + " Found:\n" + _existingPlaylists);
+        }
+        final HashMap<String, TableInfo.Column> _columnsPlaylistSongs = new HashMap<String, TableInfo.Column>(3);
+        _columnsPlaylistSongs.put("playlistId", new TableInfo.Column("playlistId", "INTEGER", true, 1, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPlaylistSongs.put("songId", new TableInfo.Column("songId", "INTEGER", true, 2, null, TableInfo.CREATED_FROM_ENTITY));
+        _columnsPlaylistSongs.put("position", new TableInfo.Column("position", "INTEGER", true, 0, null, TableInfo.CREATED_FROM_ENTITY));
+        final HashSet<TableInfo.ForeignKey> _foreignKeysPlaylistSongs = new HashSet<TableInfo.ForeignKey>(0);
+        final HashSet<TableInfo.Index> _indicesPlaylistSongs = new HashSet<TableInfo.Index>(1);
+        _indicesPlaylistSongs.add(new TableInfo.Index("index_playlist_songs_songId", false, Arrays.asList("songId"), Arrays.asList("ASC")));
+        final TableInfo _infoPlaylistSongs = new TableInfo("playlist_songs", _columnsPlaylistSongs, _foreignKeysPlaylistSongs, _indicesPlaylistSongs);
+        final TableInfo _existingPlaylistSongs = TableInfo.read(db, "playlist_songs");
+        if (!_infoPlaylistSongs.equals(_existingPlaylistSongs)) {
+          return new RoomOpenHelper.ValidationResult(false, "playlist_songs(com.mimica.musicplayer.data.local.PlaylistSongEntity).\n"
+                  + " Expected:\n" + _infoPlaylistSongs + "\n"
+                  + " Found:\n" + _existingPlaylistSongs);
+        }
         return new RoomOpenHelper.ValidationResult(true, null);
       }
-    }, "726778e02b8629954c30db25c5215d54", "780f796630d8f4b2e94a27f5e5d82a09");
+    }, "3388f31b283397832b822636bc60af33", "4ea1e4f3e6f6662c48f5e34a7844b384");
     final SupportSQLiteOpenHelper.Configuration _sqliteConfig = SupportSQLiteOpenHelper.Configuration.builder(config.context).name(config.name).callback(_openCallback).build();
     final SupportSQLiteOpenHelper _helper = config.sqliteOpenHelperFactory.create(_sqliteConfig);
     return _helper;
@@ -116,7 +154,7 @@ public final class AppDatabase_Impl extends AppDatabase {
   protected InvalidationTracker createInvalidationTracker() {
     final HashMap<String, String> _shadowTablesMap = new HashMap<String, String>(0);
     final HashMap<String, Set<String>> _viewTables = new HashMap<String, Set<String>>(0);
-    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "audio");
+    return new InvalidationTracker(this, _shadowTablesMap, _viewTables, "audio","playlists","playlist_songs");
   }
 
   @Override
@@ -126,6 +164,8 @@ public final class AppDatabase_Impl extends AppDatabase {
     try {
       super.beginTransaction();
       _db.execSQL("DELETE FROM `audio`");
+      _db.execSQL("DELETE FROM `playlists`");
+      _db.execSQL("DELETE FROM `playlist_songs`");
       super.setTransactionSuccessful();
     } finally {
       super.endTransaction();
@@ -141,6 +181,8 @@ public final class AppDatabase_Impl extends AppDatabase {
   protected Map<Class<?>, List<Class<?>>> getRequiredTypeConverters() {
     final HashMap<Class<?>, List<Class<?>>> _typeConvertersMap = new HashMap<Class<?>, List<Class<?>>>();
     _typeConvertersMap.put(AudioDao.class, AudioDao_Impl.getRequiredConverters());
+    _typeConvertersMap.put(PlaylistDao.class, PlaylistDao_Impl.getRequiredConverters());
+    _typeConvertersMap.put(PlaylistSongDao.class, PlaylistSongDao_Impl.getRequiredConverters());
     return _typeConvertersMap;
   }
 
@@ -169,6 +211,34 @@ public final class AppDatabase_Impl extends AppDatabase {
           _audioDao = new AudioDao_Impl(this);
         }
         return _audioDao;
+      }
+    }
+  }
+
+  @Override
+  public PlaylistDao playlistDao() {
+    if (_playlistDao != null) {
+      return _playlistDao;
+    } else {
+      synchronized(this) {
+        if(_playlistDao == null) {
+          _playlistDao = new PlaylistDao_Impl(this);
+        }
+        return _playlistDao;
+      }
+    }
+  }
+
+  @Override
+  public PlaylistSongDao playlistSongDao() {
+    if (_playlistSongDao != null) {
+      return _playlistSongDao;
+    } else {
+      synchronized(this) {
+        if(_playlistSongDao == null) {
+          _playlistSongDao = new PlaylistSongDao_Impl(this);
+        }
+        return _playlistSongDao;
       }
     }
   }

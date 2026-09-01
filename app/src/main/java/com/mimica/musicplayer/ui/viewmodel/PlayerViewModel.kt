@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class PlayerUiState(
     val currentSong: AudioEntity? = null,
@@ -77,6 +78,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // Palette state for dynamic theming
     private val _albumPalette = MutableStateFlow<Palette?>(null)
     val albumPalette: StateFlow<Palette?> = _albumPalette.asStateFlow()
+    private var paletteJob: Job? = null
+
+    // Sleep Timer state
+    private val _sleepTimerMinutes = MutableStateFlow<Int?>(null)
+    val sleepTimerMinutes: StateFlow<Int?> = _sleepTimerMinutes.asStateFlow()
+    private var sleepTimerJob: Job? = null
 
     val uiState: StateFlow<PlayerUiState> = combine(
         currentSong,
@@ -95,6 +102,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // Map remembering last playback position per song ID
     private val playbackPositions = mutableMapOf<Long, Long>()
 
+    private var pendingPlayRequest: Pair<AudioEntity, List<AudioEntity>>? = null
+
     private var progressJob: Job? = null
 
     init {
@@ -111,6 +120,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 mediaController = controllerFuture?.get()
                 setupPlayerListener()
+                // Sync current settings with controller
+                mediaController?.repeatMode = if (_isRepeat.value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+                mediaController?.shuffleModeEnabled = _isShuffle.value
+
+                pendingPlayRequest?.let { (song, playlist) ->
+                    pendingPlayRequest = null
+                    play(song, playlist)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -119,6 +136,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun setupPlayerListener() {
         mediaController?.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val songId = mediaItem?.mediaId?.toLongOrNull()
+                if (songId != null) {
+                    val song = _currentPlaylist.value.firstOrNull { it.id == songId }
+                    if (song != null) {
+                        _currentSong.value = song
+                        _duration.value = song.duration
+                        extractPalette(song.albumArtUri, song.id)
+                    }
+                }
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
                 if (isPlaying) {
@@ -136,70 +165,125 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         _playbackError.value = null
                     }
                     Player.STATE_ENDED -> {
-                        skipToNext()
+                        // When repeat is off and last song ends, ensure playback stops cleanly
+                        _isPlaying.value = false
+                        stopProgressTracker()
+                        saveCurrentPosition()
                     }
                     else -> {}
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                _playbackError.value = "Playback error: ${error.localizedMessage ?: "Unknown error"}"
+                _playbackError.value = "Playback error: ${error.localizedMessage ?: "Cannot read audio file"}"
                 _isPlaying.value = false
                 stopProgressTracker()
             }
         })
     }
 
+    private fun extractPalette(uriString: String?, expectedSongId: Long) {
+        paletteJob?.cancel()
+        paletteJob = viewModelScope.launch {
+            val palette = ColorExtractor.extractPaletteFromUri(getApplication(), uriString)
+            if (isActive && _currentSong.value?.id == expectedSongId) {
+                _albumPalette.value = palette
+            }
+        }
+    }
+
     fun play(song: AudioEntity, playlist: List<AudioEntity> = emptyList()) {
-        _currentSong.value = song
-        if (playlist.isNotEmpty()) {
-            _currentPlaylist.value = playlist
-        } else if (_currentPlaylist.value.none { it.id == song.id }) {
-            _currentPlaylist.value = listOf(song)
+        // 1. Validate file path string
+        if (song.filePath.isBlank()) {
+            _playbackError.value = "Cannot play track: File path is missing or unavailable offline."
+            return
         }
 
-        // Auto-extract Palette colors from album art in background
-        viewModelScope.launch {
-            val palette = ColorExtractor.extractPaletteFromUri(getApplication(), song.albumArtUri)
-            _albumPalette.value = palette
+        // 2. Validate physical file existence if absolute file path
+        if (song.filePath.startsWith("/")) {
+            val file = File(song.filePath)
+            if (!file.exists()) {
+                _playbackError.value = "Cannot play track: File no longer exists on device storage."
+                _isPlaying.value = false
+                return
+            }
         }
+
+        _currentSong.value = song
+        val effectivePlaylist = if (playlist.isNotEmpty()) {
+            playlist
+        } else if (_currentPlaylist.value.any { it.id == song.id }) {
+            _currentPlaylist.value
+        } else {
+            listOf(song)
+        }
+        _currentPlaylist.value = effectivePlaylist
+
+        extractPalette(song.albumArtUri, song.id)
 
         val controller = mediaController
         if (controller == null) {
-            initializeController()
-        }
-
-        val mediaMetadata = MediaMetadata.Builder()
-            .setTitle(song.title)
-            .setArtist(song.artist)
-            .setAlbumTitle(song.album)
-            .setArtworkUri(song.albumArtUri?.let { Uri.parse(it) })
-            .build()
-
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(song.id.toString())
-            .setUri(Uri.parse(song.filePath))
-            .setMediaMetadata(mediaMetadata)
-            .build()
-
-        controller?.let {
-            it.setMediaItem(mediaItem)
-            it.prepare()
-
-            val rememberedPosition = playbackPositions[song.id] ?: 0L
-            if (rememberedPosition > 0L) {
-                it.seekTo(rememberedPosition)
-                _currentPosition.value = rememberedPosition
-            } else {
-                _currentPosition.value = 0L
+            pendingPlayRequest = Pair(song, effectivePlaylist)
+            if (controllerFuture == null) {
+                initializeController()
             }
-
-            it.play()
-            _isPlaying.value = true
-            _duration.value = song.duration
-            _playbackError.value = null
-            startProgressTracker()
+            return
         }
+
+        // Build MediaItem list for entire playlist so system notification & lock screen have full queue
+        val mediaItems = effectivePlaylist.map { item ->
+            val mediaMetadata = MediaMetadata.Builder()
+                .setTitle(item.title)
+                .setArtist(item.artist)
+                .setAlbumTitle(item.album)
+                .setArtworkUri(item.albumArtUri?.let { Uri.parse(it) })
+                .build()
+
+            MediaItem.Builder()
+                .setMediaId(item.id.toString())
+                .setUri(Uri.parse(item.filePath))
+                .setMediaMetadata(mediaMetadata)
+                .build()
+        }
+
+        val startIndex = effectivePlaylist.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        val rememberedPosition = playbackPositions[song.id] ?: 0L
+
+        controller.setMediaItems(mediaItems, startIndex, rememberedPosition)
+        controller.repeatMode = if (_isRepeat.value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+        controller.shuffleModeEnabled = _isShuffle.value
+        controller.prepare()
+        controller.play()
+
+        _isPlaying.value = true
+        _duration.value = song.duration
+        _playbackError.value = null
+        startProgressTracker()
+    }
+
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        if (minutes <= 0) {
+            _sleepTimerMinutes.value = null
+            return
+        }
+        _sleepTimerMinutes.value = minutes
+        sleepTimerJob = viewModelScope.launch {
+            var remaining = minutes
+            while (remaining > 0 && isActive) {
+                delay(60 * 1000L)
+                remaining -= 1
+                _sleepTimerMinutes.value = if (remaining > 0) remaining else null
+            }
+            pause()
+            _sleepTimerMinutes.value = null
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerMinutes.value = null
     }
 
     fun updatePalette(bitmap: Bitmap) {
@@ -241,17 +325,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun skipToNext() {
-        val playlist = _currentPlaylist.value
-        if (playlist.isEmpty()) return
+        val controller = mediaController
+        if (controller != null && controller.hasNextMediaItem()) {
+            controller.seekToNextMediaItem()
+        } else {
+            val playlist = _currentPlaylist.value
+            if (playlist.isEmpty()) return
 
-        val currentIndex = playlist.indexOfFirst { it.id == _currentSong.value?.id }
-        if (currentIndex != -1) {
-            val nextIndex = if (_isShuffle.value) {
-                playlist.indices.random()
-            } else {
-                (currentIndex + 1) % playlist.size
+            val currentIndex = playlist.indexOfFirst { it.id == _currentSong.value?.id }
+            if (currentIndex != -1) {
+                val nextIndex = if (_isShuffle.value) {
+                    playlist.indices.random()
+                } else {
+                    (currentIndex + 1) % playlist.size
+                }
+                play(playlist[nextIndex], playlist)
             }
-            play(playlist[nextIndex], playlist)
         }
     }
 
@@ -260,6 +349,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun skipToPrevious() {
+        val controller = mediaController
+        if (controller != null) {
+            if (controller.currentPosition > 3000L) {
+                controller.seekTo(0L)
+                _currentPosition.value = 0L
+                return
+            }
+            if (controller.hasPreviousMediaItem()) {
+                controller.seekToPreviousMediaItem()
+                return
+            }
+        }
+
         val playlist = _currentPlaylist.value
         if (playlist.isEmpty()) return
 
@@ -284,7 +386,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleRepeat() {
         val newRepeat = !_isRepeat.value
         _isRepeat.value = newRepeat
-        mediaController?.repeatMode = if (newRepeat) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        mediaController?.repeatMode = if (newRepeat) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
     }
 
     fun toggleFavorite() {
@@ -320,6 +422,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         stopProgressTracker()
+        paletteJob?.cancel()
+        sleepTimerJob?.cancel()
         saveCurrentPosition()
         controllerFuture?.let {
             MediaController.releaseFuture(it)
