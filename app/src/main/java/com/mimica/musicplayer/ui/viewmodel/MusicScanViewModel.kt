@@ -8,6 +8,7 @@ import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.preferences.SettingsDataStore
 import com.mimica.musicplayer.data.repository.MusicRepository
 import com.mimica.musicplayer.data.scanner.MediaScanner
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,8 @@ class MusicScanViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _scanState = MutableStateFlow<ScanUiState>(ScanUiState.Idle)
     val scanState: StateFlow<ScanUiState> = _scanState.asStateFlow()
+
+    private var scanJob: Job? = null
 
     init {
         val database = AppDatabase.getDatabase(application)
@@ -58,11 +61,11 @@ class MusicScanViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun scanMusic() {
-        viewModelScope.launch {
+        if (scanJob?.isActive == true) return
+        scanJob = viewModelScope.launch {
             _scanState.value = ScanUiState.Loading
             try {
-                // Short delay to ensure smooth transition
-                delay(400)
+                delay(200)
                 val songs = repository.scanAndCacheMusic()
                 if (songs.isEmpty()) {
                     _scanState.value = ScanUiState.Empty

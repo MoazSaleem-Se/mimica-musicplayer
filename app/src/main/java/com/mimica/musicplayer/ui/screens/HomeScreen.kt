@@ -279,6 +279,7 @@ fun HomeScreen(
                         val coroutineScope = rememberCoroutineScope()
                         lateinit var dismissStateRef: SwipeToDismissBoxState
                         val dismissState = rememberSwipeToDismissBoxState(
+                            positionalThreshold = { totalDistance -> totalDistance * 0.65f },
                             confirmValueChange = { dismissValue ->
                                 if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
                                     songForPlaylistDialog = audio

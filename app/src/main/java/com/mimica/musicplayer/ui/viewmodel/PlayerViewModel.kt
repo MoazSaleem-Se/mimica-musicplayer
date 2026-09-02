@@ -156,14 +156,80 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 mediaController?.shuffleModeEnabled = _isShuffle.value
                 mediaController?.setPlaybackParameters(PlaybackParameters(currentPlaybackSpeed))
 
-                pendingPlayRequest?.let { (song, playlist) ->
+                if (pendingPlayRequest != null) {
+                    val request = pendingPlayRequest
                     pendingPlayRequest = null
-                    play(song, playlist)
+                    request?.let { (song, playlist) ->
+                        play(song, playlist)
+                    }
+                } else {
+                    restoreControllerState(mediaController)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }, MoreExecutors.directExecutor())
+    }
+
+    private fun restoreControllerState(controller: MediaController?) {
+        val c = controller ?: return
+        val currentItem = c.currentMediaItem ?: return
+        val songId = currentItem.mediaId.toLongOrNull() ?: return
+
+        _isPlaying.value = c.isPlaying
+        val dur = if (c.duration > 0) c.duration else 0L
+        if (dur > 0) {
+            _duration.value = dur
+        }
+        _currentPosition.value = c.currentPosition.coerceAtLeast(0L)
+
+        if (c.isPlaying) {
+            startProgressTracker()
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val count = c.mediaItemCount
+            val restoredPlaylist = mutableListOf<AudioEntity>()
+            for (i in 0 until count) {
+                val item = c.getMediaItemAt(i)
+                val itemId = item.mediaId.toLongOrNull()
+                if (itemId != null) {
+                    val dbSong = audioDao.getAudioById(itemId)
+                    if (dbSong != null) {
+                        restoredPlaylist.add(dbSong)
+                    } else {
+                        val meta = item.mediaMetadata
+                        restoredPlaylist.add(
+                            AudioEntity(
+                                id = itemId,
+                                title = meta.title?.toString() ?: "Unknown Title",
+                                artist = meta.artist?.toString() ?: "Unknown Artist",
+                                album = meta.albumTitle?.toString() ?: "Unknown Album",
+                                duration = 0L,
+                                filePath = item.requestMetadata.mediaUri?.toString() ?: "",
+                                albumArtUri = meta.artworkUri?.toString()
+                            )
+                        )
+                    }
+                }
+            }
+
+            val currentSongEntity = restoredPlaylist.firstOrNull { it.id == songId }
+                ?: audioDao.getAudioById(songId)
+
+            withContext(Dispatchers.Main) {
+                if (restoredPlaylist.isNotEmpty()) {
+                    _currentPlaylist.value = restoredPlaylist
+                }
+                if (currentSongEntity != null) {
+                    _currentSong.value = currentSongEntity
+                    if (_duration.value == 0L && currentSongEntity.duration > 0) {
+                        _duration.value = currentSongEntity.duration
+                    }
+                    extractPalette(currentSongEntity.albumArtUri, currentSongEntity.id)
+                }
+            }
+        }
     }
 
     private fun setupPlayerListener() {
@@ -176,6 +242,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         _currentSong.value = song
                         _duration.value = song.duration
                         extractPalette(song.albumArtUri, song.id)
+                    } else {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            val dbSong = audioDao.getAudioById(songId)
+                            if (dbSong != null) {
+                                withContext(Dispatchers.Main) {
+                                    _currentSong.value = dbSong
+                                    _duration.value = dbSong.duration
+                                    extractPalette(dbSong.albumArtUri, dbSong.id)
+                                }
+                            }
+                        }
                     }
                 }
             }

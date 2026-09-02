@@ -106,7 +106,21 @@ class MediaScanner(private val context: Context) {
             throw e
         }
 
-        audioList
+        val rawTotalCount = audioList.size
+        val distinctPathCount = audioList.distinctBy { it.filePath.lowercase() }.size
+        android.util.Log.d(
+            "MediaScanner",
+            "MediaStore scan result: rawCount=$rawTotalCount, distinctPathCount=$distinctPathCount (duplicates detected: ${rawTotalCount - distinctPathCount})"
+        )
+
+        // Defensive deduplication by filePath (keeping the highest ID/most recent MediaStore entry)
+        val deduplicated = audioList
+            .groupBy { it.filePath.lowercase() }
+            .mapValues { (_, entries) -> entries.maxByOrNull { it.id } ?: entries.first() }
+            .values
+            .sortedBy { it.title.lowercase() }
+
+        deduplicated
     }
 
     companion object {

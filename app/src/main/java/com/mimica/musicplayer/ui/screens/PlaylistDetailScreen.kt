@@ -230,6 +230,7 @@ fun PlaylistDetailScreen(
                     val coroutineScope = rememberCoroutineScope()
                     lateinit var dismissStateRef: SwipeToDismissBoxState
                     val dismissState = rememberSwipeToDismissBoxState(
+                        positionalThreshold = { totalDistance -> totalDistance * 0.65f },
                         confirmValueChange = { dismissValue ->
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.EndToStart -> {
