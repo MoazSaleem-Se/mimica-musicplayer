@@ -15,9 +15,9 @@ class MediaScanner(private val context: Context) {
     /**
      * Scans local audio files from MediaStore using ContentResolver.
      * Extracts title, artist, album, duration, file path, and album art URI.
-     * Robustly skips corrupted or unreadable audio tracks.
+     * Robustly skips corrupted entries and files residing in excluded folders.
      */
-    suspend fun scanLocalMusic(): List<AudioEntity> = withContext(Dispatchers.IO) {
+    suspend fun scanLocalMusic(excludedFolders: Set<String> = emptySet()): List<AudioEntity> = withContext(Dispatchers.IO) {
         val audioList = mutableListOf<AudioEntity>()
         val contentResolver: ContentResolver = context.contentResolver
 
@@ -67,6 +67,11 @@ class MediaScanner(private val context: Context) {
                         val filePath = cursor.getString(dataColumn) ?: ""
                         val albumId = cursor.getLong(albumIdColumn)
 
+                        // Check if file is inside an excluded folder
+                        if (isPathExcluded(filePath, excludedFolders)) {
+                            continue
+                        }
+
                         // Album art URI using MediaStore.Audio.Albums
                         val albumArtUri = if (albumId > 0) {
                             ContentUris.withAppendedId(
@@ -102,5 +107,16 @@ class MediaScanner(private val context: Context) {
         }
 
         audioList
+    }
+
+    companion object {
+        fun isPathExcluded(filePath: String, excludedFolders: Set<String>): Boolean {
+            if (excludedFolders.isEmpty() || filePath.isBlank()) return false
+            return excludedFolders.any { excluded ->
+                val cleanExcluded = excluded.trim().removeSuffix("/")
+                filePath.equals(cleanExcluded, ignoreCase = true) ||
+                        filePath.startsWith("$cleanExcluded/", ignoreCase = true)
+            }
+        }
     }
 }

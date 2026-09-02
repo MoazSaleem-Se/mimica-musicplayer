@@ -92,11 +92,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -135,6 +137,7 @@ import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
+import com.mimica.musicplayer.ui.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -1081,11 +1084,7 @@ fun FullPlayerContent(
     // 4. In-App Equalizer Dialog
     if (showEqualizerDialog) {
         EqualizerDialog(
-            onDismiss = { showEqualizerDialog = false },
-            onApply = {
-                showEqualizerDialog = false
-                Toast.makeText(context, "Equalizer settings applied", Toast.LENGTH_SHORT).show()
-            }
+            onDismiss = { showEqualizerDialog = false }
         )
     }
 }
@@ -1415,13 +1414,10 @@ fun SleepTimerDialog(
 @Composable
 fun EqualizerDialog(
     onDismiss: () -> Unit,
-    onApply: () -> Unit
+    settingsViewModel: SettingsViewModel = viewModel()
 ) {
-    var bassBoost by remember { mutableFloatStateOf(0.4f) }
-    var virtualizer by remember { mutableFloatStateOf(0.3f) }
-    var selectedPreset by remember { mutableStateOf("Rock") }
-
-    val presets = listOf("Flat", "Bass Boost", "Vocal", "Rock", "Electronic")
+    val settings by settingsViewModel.settings.collectAsState()
+    val presets = listOf("Normal", "Classical", "Dance", "Flat", "Folk", "Heavy Metal", "Hip Hop", "Jazz", "Pop", "Rock", "Electronic", "Bass Boost", "Vocal")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1433,40 +1429,55 @@ fun EqualizerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(320.dp)
+                    .padding(vertical = 4.dp)
             ) {
                 Text("Presets", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    presets.take(3).forEach { preset ->
+                    items(presets) { preset ->
+                        val isSelected = settings.equalizerPreset.equals(preset, ignoreCase = true)
                         FilterChip(
-                            selected = selectedPreset == preset,
-                            onClick = { selectedPreset = preset },
+                            selected = isSelected,
+                            onClick = { settingsViewModel.setEqualizerPreset(preset) },
                             label = { Text(preset, style = MaterialTheme.typography.labelSmall) }
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text("Bass Boost: ${settings.bassBoostLevel}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Slider(
+                    value = settings.bassBoostLevel / 100f,
+                    onValueChange = { settingsViewModel.setBassBoostLevel((it * 100).toInt()) },
+                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Virtualizer (Surround)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = if (settings.virtualizerEnabled) "Enabled" else "Disabled",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.virtualizerEnabled,
+                        onCheckedChange = { settingsViewModel.setVirtualizerEnabled(it) }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Bass Boost: ${(bassBoost * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                Slider(
-                    value = bassBoost,
-                    onValueChange = { bassBoost = it },
-                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
-                )
-
-                Text("Virtualizer (Surround): ${(virtualizer * 100).toInt()}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                Slider(
-                    value = virtualizer,
-                    onValueChange = { virtualizer = it },
-                    colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("5-Band EQ (60Hz • 230Hz • 910Hz • 3.6kHz • 14kHz)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Preset: ${settings.equalizerPreset}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     progress = { 0.7f },
                     modifier = Modifier
@@ -1478,8 +1489,8 @@ fun EqualizerDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onApply) {
-                Text("Apply")
+            Button(onClick = onDismiss) {
+                Text("Done")
             }
         },
         dismissButton = {

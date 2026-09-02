@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -19,6 +20,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.mimica.musicplayer.data.local.AppDatabase
 import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.data.preferences.SettingsDataStore
 import com.mimica.musicplayer.playback.MusicPlayerService
 import com.mimica.musicplayer.utils.ColorExtractor
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -47,6 +51,10 @@ data class PlayerUiState(
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val audioDao = AppDatabase.getDatabase(application).audioDao()
+    private val settingsDataStore = SettingsDataStore(application)
+
+    private var currentPlaybackSpeed: Float = 1.0f
+    private var currentCrossfadeDuration: Float = 0f
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
@@ -102,15 +110,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         initialValue = PlayerUiState()
     )
 
-    // Map remembering last playback position per song ID
-    private val playbackPositions = mutableMapOf<Long, Long>()
-
+    private var progressJob: Job? = null
     private var pendingPlayRequest: Pair<AudioEntity, List<AudioEntity>>? = null
 
-    private var progressJob: Job? = null
+    // Persistent playback position map
+    private val playbackPositions = mutableMapOf<Long, Long>()
 
     init {
         initializeController()
+        observeSettings()
+    }
+
+    private fun observeSettings() {
+        viewModelScope.launch {
+            settingsDataStore.userSettingsFlow
+                .map { it.playbackSpeed }
+                .distinctUntilChanged()
+                .collect { speed ->
+                    currentPlaybackSpeed = speed
+                    mediaController?.setPlaybackParameters(PlaybackParameters(speed))
+                }
+        }
+        viewModelScope.launch {
+            settingsDataStore.userSettingsFlow
+                .map { it.crossfadeDuration }
+                .distinctUntilChanged()
+                .collect { duration ->
+                    currentCrossfadeDuration = duration
+                }
+        }
     }
 
     private fun initializeController() {
@@ -126,6 +154,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // Sync current settings with controller
                 mediaController?.repeatMode = if (_isRepeat.value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
                 mediaController?.shuffleModeEnabled = _isShuffle.value
+                mediaController?.setPlaybackParameters(PlaybackParameters(currentPlaybackSpeed))
 
                 pendingPlayRequest?.let { (song, playlist) ->
                     pendingPlayRequest = null
@@ -168,7 +197,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         _playbackError.value = null
                     }
                     Player.STATE_ENDED -> {
-                        // When repeat is off and last song ends, ensure playback stops cleanly
                         _isPlaying.value = false
                         stopProgressTracker()
                         saveCurrentPosition()
@@ -178,27 +206,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                _playbackError.value = "Playback error: ${error.localizedMessage ?: "Cannot read audio file"}"
                 _isPlaying.value = false
                 stopProgressTracker()
+                _playbackError.value = "Playback error: ${error.localizedMessage ?: "Unknown audio error"}"
             }
         })
     }
 
-    private fun extractPalette(uriString: String?, expectedSongId: Long) {
+    private fun extractPalette(albumArtUri: String?, songId: Long) {
         paletteJob?.cancel()
-        paletteJob = viewModelScope.launch {
-            val palette = ColorExtractor.extractPaletteFromUri(getApplication(), uriString)
-            if (isActive && _currentSong.value?.id == expectedSongId) {
-                _albumPalette.value = palette
+        if (albumArtUri.isNullOrEmpty()) {
+            _albumPalette.value = null
+            return
+        }
+
+        paletteJob = viewModelScope.launch(Dispatchers.IO) {
+            val palette = ColorExtractor.extractPaletteFromUri(getApplication(), albumArtUri)
+            withContext(Dispatchers.Main) {
+                if (_currentSong.value?.id == songId) {
+                    _albumPalette.value = palette
+                }
             }
         }
     }
 
     fun play(song: AudioEntity, playlist: List<AudioEntity> = emptyList()) {
-        // 1. Validate file path string
+        // 1. Validate file path format
         if (song.filePath.isBlank()) {
-            _playbackError.value = "Cannot play track: File path is missing or unavailable offline."
+            _playbackError.value = "Cannot play track: File path is empty or song is unavailable."
+            _isPlaying.value = false
             return
         }
 
@@ -255,6 +291,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         controller.setMediaItems(mediaItems, startIndex, rememberedPosition)
         controller.repeatMode = if (_isRepeat.value) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
         controller.shuffleModeEnabled = _isShuffle.value
+        controller.setPlaybackParameters(PlaybackParameters(currentPlaybackSpeed))
         controller.prepare()
         controller.play()
 
@@ -372,11 +409,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val playlist = _currentPlaylist.value
         if (playlist.isEmpty()) return
 
-        if (_currentPosition.value > 3000L) {
-            seekTo(0L)
-            return
-        }
-
         val currentIndex = playlist.indexOfFirst { it.id == _currentSong.value?.id }
         if (currentIndex != -1) {
             val prevIndex = if (currentIndex - 1 < 0) playlist.size - 1 else currentIndex - 1
@@ -411,10 +443,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         progressJob?.cancel()
         progressJob = viewModelScope.launch {
             while (isActive && _isPlaying.value) {
-                mediaController?.let {
-                    _currentPosition.value = it.currentPosition.coerceAtLeast(0L)
-                    if (it.duration > 0) {
-                        _duration.value = it.duration
+                mediaController?.let { controller ->
+                    val pos = controller.currentPosition.coerceAtLeast(0L)
+                    val dur = if (controller.duration > 0) controller.duration else _duration.value
+                    _currentPosition.value = pos
+                    if (controller.duration > 0) {
+                        _duration.value = controller.duration
+                    }
+
+                    // Crossfade volume ramping effect
+                    if (currentCrossfadeDuration > 0f && dur > 0) {
+                        val fadeWindowMs = (currentCrossfadeDuration * 1000).toLong().coerceAtLeast(1000L)
+                        val remainingMs = dur - pos
+                        val targetVol = when {
+                            pos < fadeWindowMs -> (pos.toFloat() / fadeWindowMs.toFloat()).coerceIn(0.05f, 1f)
+                            remainingMs < fadeWindowMs -> (remainingMs.toFloat() / fadeWindowMs.toFloat()).coerceIn(0.05f, 1f)
+                            else -> 1.0f
+                        }
+                        controller.volume = targetVol
+                    } else {
+                        if (controller.volume != 1.0f) {
+                            controller.volume = 1.0f
+                        }
                     }
                 }
                 delay(500)

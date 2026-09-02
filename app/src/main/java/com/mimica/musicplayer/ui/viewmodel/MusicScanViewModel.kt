@@ -5,12 +5,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mimica.musicplayer.data.local.AppDatabase
 import com.mimica.musicplayer.data.local.AudioEntity
+import com.mimica.musicplayer.data.preferences.SettingsDataStore
 import com.mimica.musicplayer.data.repository.MusicRepository
 import com.mimica.musicplayer.data.scanner.MediaScanner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 sealed interface ScanUiState {
@@ -32,21 +34,17 @@ class MusicScanViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         val database = AppDatabase.getDatabase(application)
         val scanner = MediaScanner(application)
-        repository = MusicRepository(database.audioDao(), scanner)
+        val dataStore = SettingsDataStore(application)
+        repository = MusicRepository(database.audioDao(), scanner, dataStore)
 
-        // Load cached songs from Room immediately if available
-        loadCachedMusic()
-    }
-
-    private fun loadCachedMusic() {
+        // Reactively observe cached audio filtered by current excluded folders
         viewModelScope.launch {
-            try {
-                val cached = repository.getCachedAudio()
-                if (cached.isNotEmpty()) {
-                    _scanState.value = ScanUiState.Success(cached)
+            repository.cachedAudioFlow.distinctUntilChanged().collect { songs ->
+                if (songs.isNotEmpty()) {
+                    _scanState.value = ScanUiState.Success(songs)
+                } else if (_scanState.value !is ScanUiState.Loading && _scanState.value !is ScanUiState.PermissionDenied) {
+                    _scanState.value = ScanUiState.Empty
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }
