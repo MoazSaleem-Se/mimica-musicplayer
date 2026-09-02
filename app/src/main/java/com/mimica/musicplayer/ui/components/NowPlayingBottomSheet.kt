@@ -827,28 +827,34 @@ private fun FullPlayerAlbumArt(
     val dragOffsetY = remember { Animatable(0f) }
     val dragOffsetX = remember { Animatable(0f) }
 
-    AnimatedContent(
-        targetState = song.id,
-        transitionSpec = {
-            (fadeIn(tween(400)) + scaleIn(initialScale = 0.92f, animationSpec = tween(400)))
-                .togetherWith(fadeOut(tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
-        },
-        label = "AlbumArtTransition"
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.68f)
-                .aspectRatio(1f)
-                .offset { IntOffset(dragOffsetX.value.roundToInt(), dragOffsetY.value.roundToInt()) }
-                .graphicsLayer {
-                    alpha = (1f - (abs(dragOffsetX.value) / (swipeThresholdPx * 2.5f))).coerceIn(0.55f, 1f)
-                }
-                .shadow(
-                    elevation = 12.dp,
-                    shape = RoundedCornerShape(24.dp),
-                    clip = false
-                )
-                .pointerInput(song.id) {
+        AnimatedContent(
+            targetState = song.id,
+            transitionSpec = {
+                (fadeIn(tween(400)) + scaleIn(initialScale = 0.92f, animationSpec = tween(400)))
+                    .togetherWith(fadeOut(tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
+            },
+            label = "AlbumArtTransition"
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.78f)
+                    .aspectRatio(1f)
+                    .offset { IntOffset(dragOffsetX.value.roundToInt(), dragOffsetY.value.roundToInt()) }
+                    .graphicsLayer {
+                        alpha = (1f - (abs(dragOffsetX.value) / (swipeThresholdPx * 2.5f))).coerceIn(0.55f, 1f)
+                    }
+                    .shadow(
+                        elevation = 8.dp,
+                        shape = RoundedCornerShape(24.dp),
+                        clip = false
+                    )
+                    .pointerInput(song.id) {
                     val touchSlop = viewConfiguration.touchSlop
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -970,6 +976,7 @@ private fun FullPlayerAlbumArt(
             }
         }
     }
+}
 }
 
 @Composable

@@ -1,186 +1,161 @@
 # Project Documentation - Mimica Music Player
 
-Generated on 2026-08-31 based on source analysis of the repository.
+**Architecture & Implementation Reference Guide**
 
 ---
 
 ## 1. Architecture Overview
 
-### Package / Directory Breakdown (`app/src/main/java/com/mimica/musicplayer/`)
-
-- **`data/local/`**:
-  - `AppDatabase.kt`: Abstract Room database singleton (`"music_player_database"`), database version 2, registers `AudioEntity`, `PlaylistEntity`, and `PlaylistSongEntity`.
-  - `AudioDao.kt`: Room DAO interface for SQLite queries on the `audio` table (`getAllAudio()`, `getAllAudioList()`, `getAudioById()`, `insertAll()`, `insert()`, `delete()`, `clearAll()`).
-  - `AudioEntity.kt`: Room `@Entity` representing a scanned audio file (`id`, `title`, `artist`, `album`, `duration`, `filePath`, `albumArtUri`, `albumId`, and computed property `durationFormatted`).
-  - `PlaylistEntity.kt`: Room `@Entity` representing a user playlist (`id`, `name`, `createdAt`, `songCount`).
-  - `PlaylistSongEntity.kt`: Room `@Entity` cross-reference join table (`playlistId`, `songId`, `position`).
-  - `PlaylistDao.kt`: Room DAO interface for CRUD operations on playlists (`getAllPlaylists()`, `getPlaylistById()`, `insertPlaylist()`, `updatePlaylist()`, `deletePlaylist()`, `deletePlaylistById()`).
-  - `PlaylistSongDao.kt`: Room DAO interface for managing songs in playlists (`insertSongToPlaylist()`, `removeSongFromPlaylist()`, `getSongsForPlaylist()`, `getSongCount()`, `clearPlaylistSongs()`).
-- **`data/repository/`**:
-  - `MusicRepository.kt`: Bridge between Room database (`AudioDao`) and device media scanner (`MediaScanner`). Exposes `cachedAudioFlow`, `getCachedAudio()`, and `scanAndCacheMusic()`.
-- **`data/scanner/`**:
-  - `MediaScanner.kt`: Scans local device audio using `ContentResolver` querying `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI` / `VOLUME_EXTERNAL`. Filters tracks with `IS_MUSIC != 0` and `DURATION >= 10000` (10 seconds). Builds album artwork URI via `content://media/external/audio/albumart/<albumId>`.
-- **`model/`**:
-  - `Song.kt`: Data class model (`id`, `title`, `artist`, `album`, `artworkUrl`, `duration`, `durationMs`, `audioUrl`).
-- **`playback/`**:
-  - `MusicPlayerService.kt`: `MediaSessionService` (Media3) handling background playback. Creates `ExoPlayer` with `AudioAttributes` (`USAGE_MEDIA`, `AUDIO_CONTENT_TYPE_MUSIC`, `handleAudioFocus = true` to pause on calls and resume after, and `handleAudioBecomingNoisy = true`). Creates a `MediaSession` with an immutable `PendingIntent` launching `MainActivity`.
-- **`ui/components/`**:
-  - `NowPlayingBottomSheet.kt`: Main active player UI component, gestures, and modal controllers. Contains:
-    - `NowPlayingBottomSheet`: Controls `AnimatedVisibility` for the floating mini player and launches `ModalBottomSheet` for the full player.
-    - `MiniPlayerContent`: 80.dp persistent bottom bar with Coil artwork thumbnail, title, artist, live progress indicator line, play/pause button, skip next, and **horizontal swipe gestures** (~100dp threshold) to skip next/previous tracks with smooth `Animatable` spring physics.
-    - `FullPlayerContent`: Full-screen player with top collapse/menu bar, 68% width artwork card with **vertical swipe-down gesture** (~150dp threshold) on album art to collapse, title/artist, live seek bar slider with timestamps, 5 control buttons (Shuffle, Prev, 72.dp Play/Pause FAB, Next, Repeat), media volume slider, queue info, and favorite toggle.
-    - `AddToPlaylistDialog`: Real Room-backed dialog to save `currentSong` to existing playlists or create a new playlist on the fly.
-    - `ArtistSongsDialog`: Dialog filtering and listing all tracks by the current song's artist with direct playback.
-    - `SleepTimerDialog`: Interactive countdown selection (15/30/45/60 min) with cancel option.
-    - `EqualizerDialog`: Built-in 5-band equalizer, Bass Boost, Virtualizer, and presets.
-    - `AnimatedScaleIconButton`: Interactive button with press scale spring animation.
-- **`ui/navigation/`**:
-  - `Screen.kt`: Sealed class defining navigation destinations (`Home`, `Search`, `Library`, `Player`) with title and Material icons.
-  - `HomeScreen.kt`: Modern YouTube/Spotify style streaming home screen without filter chips. Features:
-    - Dynamic greeting header ("Good morning", "Good afternoon", "Good evening") with Rescan, Notifications, and Settings action buttons.
-    - **Quick picks** horizontal carousel with 160dp cards, rounded corners, album artwork, dark gradient overlays, and live play/pause badges.
-    - **Keep listening** section featuring 48dp compact cards with quick playback controls.
-    - **All Songs (X)** section with `SwipeToDismissBox` (Swipe Left to Add to Playlist), solid `lerp` opaque background, and active play/pause indicators.
-    - Shimmer loading state, empty state, and runtime storage/notification permission flow.
-  - `SearchScreen.kt`: Real-time search UI over scanned local tracks (filtering title, artist, album) with genre quick tags, category browse cards, and **SwipeToDismissBox** gesture (Swipe Left to Add to Playlist).
-  - `LibraryScreen.kt`: Real library browser with category tabs ("All Tracks", "Playlists", "Artists", "Albums"). Provides inline playlist creation, navigation to `PlaylistDetailScreen`, and **SwipeToDismissBox** gesture on tracks.
-  - `PlaylistDetailScreen.kt`: Full detail view for playlists showing track list, total runtime, "Play All" button, **SwipeToDismissBox** gestures (Swipe Left to Add to Another Playlist, Swipe Right to Remove from Playlist), and playlist deletion.
-- **`ui/theme/`**:
-  - `Color.kt`, `Theme.kt`, `Type.kt`: Jetpack Compose Material 3 theme definitions with Material You dynamic color support.
-- **`ui/viewmodel/`**:
-  - `PlayerViewModel.kt`: Central playback ViewModel connecting to `MusicPlayerService` via Media3 `MediaController`. Manages playback state, queue, position progress tracking, Sleep Timer countdown, and Palette colors. Validates file paths proactively.
-  - `PlaylistViewModel.kt`: Manages playlist state, creation, deletion, song addition, song removal, and reactive song flow for playlists.
-  - `MusicScanViewModel.kt`: Media scanning ViewModel connecting to `MusicRepository`. Manages `ScanUiState` (`Idle`, `Loading`, `Success`, `Empty`, `PermissionDenied`, `Error`).
-- **`utils/`**:
-  - `ColorExtractor.kt`: Palette API utility extracting swatches (`darkVibrant`, `darkMuted`, `lightVibrant`, `lightMuted`, `vibrant`) from `Bitmap` on `Dispatchers.Default`, and loading software bitmaps from URI via Coil `ImageLoader(allowHardware = false)` on `Dispatchers.IO`.
-
----
-
-### Actual Playback Data Flow (From UI Tap to Audio Output)
-
-1. **User Tap / Gesture**: User taps a song in `HomeScreen`, `SearchScreen`, `LibraryScreen`, `PlaylistDetailScreen`, or swipes MiniPlayer / FullPlayer.
-2. **Screen Callback**: Screen validates that `audio.filePath` is not empty and invokes `onAudioClick(audio, playlist)`. If `filePath` is blank, displays Toast `"This song is not available offline"`.
-3. **Activity Host**: `MainActivity.kt`'s `MusicPlayerApp` receives the callback, re-verifies `filePath.isNotBlank()`, and calls `playerViewModel.play(audio, playlist)`.
-4. **`PlayerViewModel`**:
-   - Validates `song.filePath.isNotBlank()` and physical file existence.
-   - Updates `_currentSong.value` and `_currentPlaylist.value`.
-   - Dispatches a coroutine with cancellation to extract Palette colors from `song.albumArtUri` via `ColorExtractor.extractPaletteFromUri()` and updates `_albumPalette`.
-   - Checks `mediaController`:
-     - If `null`, stores `Pair(song, playlist)` into `pendingPlayRequest`, ensures `initializeController()` is running, and returns early.
-     - When `controllerFuture` completes, `initializeController()` retrieves `mediaController`, configures `Player.Listener` (including `onMediaItemTransition`), and calls `play(song, playlist)`.
-   - Builds `MediaMetadata` (title, artist, album, artworkUri) and `MediaItem` for the entire active playlist.
-   - Calls `mediaController.setMediaItems(mediaItems, startIndex, rememberedPosition)`, `mediaController.prepare()`, and `mediaController.play()`.
-   - Sets `_isPlaying.value = true` and launches `startProgressTracker()` coroutine loop (polls `mediaController.currentPosition` every 500ms).
-5. **`MusicPlayerService` (Media3)**:
-   - Receives command via `MediaSession`.
-   - Attached `ExoPlayer` handles audio focus, prepares local media stream, and starts audio output.
-   - `ExoPlayer` state changes fire `Player.Listener` callbacks (`onMediaItemTransition`, `onIsPlayingChanged`, `onPlaybackStateChanged`, `onPlayerError`) in `PlayerViewModel`.
-6. **UI Recomposition**:
-   - `NowPlayingBottomSheet` collects `currentSong`, `isPlaying`, `currentPosition`, `duration`, and `albumPalette`.
-   - `AnimatedVisibility(visible = currentSong != null)` renders `MiniPlayerContent` (80.dp peek).
-   - Tapping the mini player sets `isExpanded = true`, rendering `ModalBottomSheet` with `FullPlayerContent` and animated Palette gradient theming.
+```
+com.mimica.musicplayer/
+├── data/
+│   ├── local/                     # Room Database & DAO Layer (Schema Version 4)
+│   │   ├── AppDatabase.kt         # Room database singleton with migrations (MIGRATION_2_3, MIGRATION_3_4)
+│   │   ├── AudioEntity.kt         # Scanned track entity with custom metadata & format fields
+│   │   ├── AudioDao.kt            # Room DAO for local audio tracks & custom metadata
+│   │   ├── PlaylistEntity.kt      # Playlist entity with custom cover artwork URI
+│   │   ├── PlaylistDao.kt         # Room DAO for playlist CRUD operations
+│   │   ├── PlaylistSongEntity.kt  # Join table for playlist-track associations
+│   │   └── PlaylistSongDao.kt     # Room DAO for playlist track queries
+│   ├── preferences/
+│   │   └── SettingsDataStore.kt   # Persistent Jetpack DataStore preferences for all app settings
+│   ├── repository/
+│   │   └── MusicRepository.kt     # Coordinates Room caching, scanner execution, & excluded folder filtering
+│   └── scanner/
+│       └── MediaScanner.kt        # Two-tier MediaStore scanner (Path-based + Content-based dedup)
+├── playback/
+│   └── MusicPlayerService.kt      # Media3 MediaSessionService with ExoPlayer & AudioEffects pipeline
+├── ui/
+│   ├── components/
+│   │   ├── AnimatedScaleIconButton.kt # Spring-scale interactive button
+│   │   ├── EditMetadataDialog.kt  # Dialogs for editing song metadata & playlist artwork
+│   │   └── NowPlayingBottomSheet.kt # Mini player & modular Full Player composables
+│   ├── navigation/
+│   │   └── Screen.kt              # Sealed class defining app routes & bottom bar items
+│   ├── screens/
+│   │   ├── HomeScreen.kt          # Greeting header, Quick Picks, Keep Listening, All Songs
+│   │   ├── SearchScreen.kt        # Real-time search with format badges & metadata editing
+│   │   ├── LibraryScreen.kt       # Tabs (Tracks, Playlists, Artists, Albums) & custom artwork
+│   │   ├── PlaylistDetailScreen.kt # Playlist details, tracklist, and custom cover editor
+│   │   ├── StatsScreen.kt         # Comprehensive listening analytics & charts
+│   │   ├── SettingsScreen.kt      # Full user preferences & audio effect configuration
+│   │   ├── NotificationSettingsScreen.kt # Notification permissions & style options
+│   │   └── NotificationScreen.kt  # Notification preview & test notification trigger
+│   ├── theme/
+│   │   ├── Color.kt               # Theme palette & color swatches
+│   │   ├── Theme.kt               # Material 3 dark/light theme wrapper with dynamic colors
+│   │   └── Type.kt                # Typography styles
+│   └── viewmodel/
+│       ├── PlayerViewModel.kt     # MediaController connection, playback state, queue, & audio effects
+│       ├── PlaylistViewModel.kt   # Playlist CRUD and song association management
+│       ├── MusicScanViewModel.kt  # Media scanning state machine
+│       ├── SettingsViewModel.kt   # DataStore settings bridge
+│       ├── StatsViewModel.kt      # Listening statistics aggregation by time window
+│       └── NotificationSettingsViewModel.kt # Notification settings bridge
+└── utils/
+    └── ColorExtractor.kt          # Palette API background swatch extractor
+```
 
 ---
 
-## 2. Key Classes and Actual Responsibilities
+## 2. Core Subsystems
 
-- **`MainActivity`**:
-  - Initializes edge-to-edge Compose content with `AppTheme`.
-  - Instantiates `PlayerViewModel by viewModels()`.
-  - Sets up `Scaffold` with `BottomNavigationBar` (routes: `home`, `search`, `library`), `NavHost`, and floating `NowPlayingBottomSheet` aligned at `BottomCenter`.
+### 2.1 Media Scanning & Two-Tier Deduplication (`MediaScanner.kt`)
+- **Query Projection**: Queries `_ID`, `TITLE`, `ARTIST`, `ALBUM`, `DURATION`, `_DATA`, `ALBUM_ID`, `MIME_TYPE`, `_SIZE` from `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI` / `VOLUME_EXTERNAL`.
+- **Pre-Filtering**: Filters out non-music items (`IS_MUSIC != 0`) and files shorter than 10 seconds (`DURATION >= 10000`). Checks against active excluded folders.
+- **Pass 1 (Path-Based Deduplication)**: Collapses identical file paths (`filePath.lowercase()`), retaining the entry with the highest MediaStore ID.
+- **Pass 2 (Content-Based Deduplication)**:
+  - Groups tracks by normalized key: `"${title.lowercase().trim()}|${artist.lowercase().trim()}|$duration|$size"`.
+  - Disambiguates using exact track duration and byte-exact file size.
+  - Employs priority scoring (`selectPreferredEntry`):
+    1. Canonical storage paths (`/storage/emulated/...`) preferred over legacy mount aliases (`/sdcard/`, `/mnt/...`).
+    2. Dedicated audio directories (`/Music/`, `/Audio/`) preferred over generic storage (`/Documents/`, `/Download/`).
+    3. Highest MediaStore ID used as final tie-breaker.
+- **Format Extraction**: Resolves clean format badges (`MP3`, `FLAC`, `WAV`, `OGG`, `M4A`, `AAC`, `OPUS`, `AMR`, `MIDI`) via MIME type and file extension fallback.
+
+---
+
+### 2.2 Room Database Layer (Version 4)
+- **`AudioEntity`**:
+  - `id: Long` (Primary Key)
+  - `title: String`, `artist: String`, `album: String`, `duration: Long`, `filePath: String`
+  - `albumArtUri: String?`, `albumId: Long`
+  - `plays: Int`, `lastPlayed: Long`, `totalTime: Long` (Added in v3 for Stats)
+  - `customArtworkUri: String?`, `customArtistName: String?`, `fileFormat: String` (Added in v4 for Metadata Editing)
+  - Computed properties: `displayArtist`, `displayArtworkUri`, `durationFormatted`.
+- **`PlaylistEntity`**:
+  - `id: Long` (Primary Key), `name: String`, `createdAt: Long`, `songCount: Int`
+  - `customArtworkUri: String?` (Added in v4)
+  - Computed property: `displayArtworkUri`.
+- **`PlaylistSongEntity`**:
+  - `playlistId: Long`, `songId: Long`, `position: Int` (Composite Primary Key).
+- **Metadata Persistence**: Scans preserve custom user-edited metadata (`customArtistName`, `customArtworkUri`) by querying existing values prior to database cache replacement.
+
+---
+
+### 2.3 Audio Playback & Media3 Integration
 - **`MusicPlayerService`**:
-  - Extends `MediaSessionService`.
-  - Creates and owns the background `ExoPlayer` instance configured with `AudioAttributes` (`handleAudioFocus = true`) and becoming-noisy handling.
-  - Manages `MediaSession` lifecycle and service destruction (`stopSelf` on task removal when idle or paused).
+  - Extends Media3 `MediaSessionService`.
+  - Configures `ExoPlayer` with `AudioAttributes(USAGE_MEDIA, AUDIO_CONTENT_TYPE_MUSIC)`, automatic audio focus handling, and noisy intent handling.
+  - Dynamically attaches and manages Android `AudioEffect` instances (`Equalizer`, `BassBoost`, `Virtualizer`, `LoudnessEnhancer`) bound to the active `audioSessionId`.
+  - Registers `HeadsetReceiver` for wired and Bluetooth connection/disconnection auto-play and auto-pause.
 - **`PlayerViewModel`**:
-  - Connects to `MusicPlayerService` via `MediaController.Builder` asynchronously.
-  - Holds and exposes playback state flows (`currentSong`, `isPlaying`, `currentPosition`, `duration`, `isShuffle`, `isRepeat`, `playbackError`, `currentPlaylist`, `albumPalette`, `sleepTimerMinutes`, `uiState`).
-  - Implements playback actions: `play()`, `pause()`, `resume()`, `togglePlayPause()`, `seekTo()`, `skipToNext()`, `skipToPrevious()`, `toggleShuffle()`, `toggleRepeat()`, `toggleFavorite()`, `setSleepTimer()`, `cancelSleepTimer()`, `updatePalette()`.
-  - Validates `song.filePath.isNotBlank()` before playback dispatch.
-  - Tracks playback progress via polling coroutine (`delay(500)`).
-- **`PlaylistViewModel`**:
-  - Manages Room-persisted playlists via `PlaylistDao` and `PlaylistSongDao`.
-  - Exposes `playlists: StateFlow<List<PlaylistEntity>>`.
-  - Provides `createPlaylist()`, `deletePlaylist()`, `addSongToPlaylist()`, `removeSongFromPlaylist()`, and `getSongsForPlaylist()`.
-- **`MusicScanViewModel`**:
-  - Manages local storage scanning state via `ScanUiState` (`Idle`, `Loading`, `Success`, `Empty`, `PermissionDenied`, `Error`).
-  - Auto-loads cached songs from `MusicRepository.getCachedAudio()` on initialization.
-  - Exposes `scanMusic()`, `onPermissionGranted()`, and `onPermissionDenied()`.
-- **`MediaScanner`**:
-  - Queries Android `MediaStore.Audio.Media` using `ContentResolver` on `Dispatchers.IO`.
-  - Filters music files (`IS_MUSIC != 0`, `DURATION >= 10000`).
-  - Constructs `AudioEntity` objects with metadata and content URI for album art.
-- **`MusicRepository`**:
-  - Coordinates Room database caching (`AudioDao`) and local device scanning (`MediaScanner`).
-  - Clears and rewrites cached audio entities upon successful scan.
-- **`AppDatabase` / `AudioDao` / `PlaylistDao` / `PlaylistSongDao`**:
-  - `AppDatabase`: Room database instance (`version = 2`, `fallbackToDestructiveMigration`).
-  - `AudioDao`: Interface for audio track caching.
-  - `PlaylistDao`: Interface for playlist CRUD queries.
-  - `PlaylistSongDao`: Interface for playlist track cross-reference queries.
+  - Asynchronously connects to `MusicPlayerService` via `MediaController.Builder`.
+  - Automatically syncs existing player state upon Activity re-creation (restores active track, playback status, and playlist queue).
+  - Drives live progress polling (every 500ms), crossfade volume ramp approximations, playback speed adjustments, sleep timer countdown, and Palette color extraction.
+  - Increments play counts and listening duration on song transitions for stats tracking.
 
 ---
 
-## 3. State Management Approach
-
-### Exposed StateFlows:
-- **`PlayerViewModel`**: `currentSong`, `isPlaying`, `currentPosition`, `duration`, `isShuffle`, `isRepeat`, `playbackError`, `currentPlaylist`, `albumPalette`, `sleepTimerMinutes`, `uiState`.
-- **`PlaylistViewModel`**: `playlists: StateFlow<List<PlaylistEntity>>`.
-- **`MusicScanViewModel`**: `scanState: StateFlow<ScanUiState>`.
+### 2.4 UI Architecture & Jetpack Compose Components
+- **`NowPlayingBottomSheet.kt`**:
+  - **Modular Full Player Composables**: Decomposed into `FullPlayerTopBar`, `FullPlayerAlbumArt`, `FullPlayerSongInfo`, `FullPlayerSeekBar`, `FullPlayerControls`, and `FullPlayerVolumeAndUpNext` to adhere strictly to Dalvik/ART 256-register limits.
+  - **Dominant-Axis Gesture Handling**: Album Art card cleanly handles both horizontal drag gestures (swipe left for Next, swipe right for Previous) and vertical drag down (swipe down to collapse).
+  - **Mini Player**: Floating bottom bar with 80dp height, persistent Coil thumbnail, live progress bar, play/pause toggle, skip next, and horizontal swipe gestures.
+  - **Adaptive Palette Theming**: Smoothly animates gradient backgrounds and text colors to match album artwork tones.
+- **`EditMetadataDialog.kt`**:
+  - Allows editing song title/artist and picking custom artwork from gallery.
+  - Safely copies picked images to internal app storage (`context.filesDir/artwork_<id>_<timestamp>.jpg`) to prevent URI permission revocation across device reboots.
+- **`HomeScreen.kt`**:
+  - Greeting header with time-based greetings, dynamic Rescan button, Stats icon, and Settings icon.
+  - **Quick Picks Carousel**: 180dp cards with `rememberSnapFlingBehavior` and indexed staggered animations.
+  - **All Songs List**: Formatted with solid, pre-blended `lerp` surface backgrounds, format badges, metadata edit pencils, and `SwipeToDismissBox` (Swipe Left to Add to Playlist).
+- **`StatsScreen.kt`**:
+  - Visual listening analytics across selectable time filters ("Continuous", "1 week", "1 month", "3 months").
+  - Displays total listening time, total plays, unique tracks, unique artists, favorite artist, favorite track, listening pattern bar charts, and top track rankings.
 
 ---
 
-## 4. Known Limitations / Incomplete Parts
+## 3. Technology Stack & Dependencies
 
-- **Online Streaming (YouTube / Cloud API)**: Search categories and online mock queries are set up as UI placeholders; online streaming is not yet connected to a remote audio streaming backend.
-- **Network Dependencies**: `Retrofit` and `OkHttp` are included in `build.gradle.kts` / `libs.versions.toml`, but no network API interfaces or HTTP services are implemented.
-- **Header Actions in `HomeScreen`**: Notifications and Settings `IconButton` components have empty click lambdas (`{}`).
-
----
-
-## 5. Dependencies Actually in Use
-
-Verified from `gradle/libs.versions.toml` and `app/build.gradle.kts`:
-
-| Dependency / Plugin | Version | Artifact Identifier |
+| Component | Library / Version | Purpose |
 |---|---|---|
-| Android Gradle Plugin | `8.5.2` | `com.android.application` |
-| Kotlin | `2.0.21` | `org.jetbrains.kotlin.android`, `org.jetbrains.kotlin.plugin.compose` |
-| KSP (Kotlin Symbol Processing) | `2.0.21-1.0.28` | `com.google.devtools.ksp` |
-| AndroidX Core KTX | `1.13.1` | `androidx.core:core-ktx` |
-| AndroidX Lifecycle | `2.8.7` | `lifecycle-runtime-ktx`, `lifecycle-runtime-compose`, `lifecycle-viewmodel-compose` |
-| AndroidX Activity Compose | `1.9.3` | `androidx.activity:activity-compose` |
-| Jetpack Compose BOM | `2024.10.00` | `androidx.compose:compose-bom` (`ui`, `ui-graphics`, `ui-tooling-preview`, `ui-tooling`, `material3`, `material-icons-extended`) |
-| Navigation Compose | `2.8.3` | `androidx.navigation:navigation-compose` |
-| Media3 (ExoPlayer & Session) | `1.4.0` | `media3-exoplayer`, `media3-session`, `media3-ui`, `media3-common` |
-| Room | `2.6.1` | `room-runtime`, `room-ktx`, `room-compiler` |
-| Retrofit | `2.11.0` | `retrofit`, `converter-gson` |
-| OkHttp | `4.12.0` | `okhttp`, `logging-interceptor` |
-| Kotlinx Coroutines | `1.8.0` | `kotlinx-coroutines-core`, `kotlinx-coroutines-android` |
-| Coil | `2.7.0` | `io.coil-kt:coil-compose` |
-| Palette API | `1.0.0` | `androidx.palette:palette-ktx` |
-| JUnit / AndroidX Test / Espresso | `4.13.2` / `1.2.1` / `3.6.1` | `junit`, `androidx.test.ext:junit`, `androidx.test.espresso:espresso-core` |
+| Language | Kotlin `2.0.21` | Application language |
+| UI Framework | Jetpack Compose BOM `2024.10.00` | Declarative UI, Material 3, Animations |
+| Media Framework | AndroidX Media3 `1.4.0` | ExoPlayer, MediaSession, MediaController |
+| Local Database | Room `2.6.1` + KSP | SQLite ORM, Migrations, Reactive DAO flows |
+| Preferences | Jetpack DataStore Preferences `1.1.1` | Asynchronous key-value settings storage |
+| Image Loading | Coil `2.7.0` | Asynchronous image loading & hardware bitmap bypass |
+| Palette Extraction | AndroidX Palette `1.0.0` | Dynamic color extraction from artwork |
+| Navigation | Navigation Compose `2.8.3` | Single-activity screen navigation |
 
 ---
 
-### 2. Comprehensive Settings Page & DataStore Integration
-- **`data/preferences/SettingsDataStore.kt`**: Persistent key-value storage using Jetpack DataStore Preferences managing crossfade duration, gapless playback, playback speed, volume normalization, equalizer preset, bass boost, virtualizer, theme mode (System/Light/Dark), dynamic theming, accent colors, startup library scan, excluded folders, queue settings, notification style, lock screen controls, and headset auto-play/pause.
-- **`ui/viewmodel/SettingsViewModel.kt` & `NotificationSettingsViewModel.kt`**: `AndroidViewModel`s exposing `StateFlow<UserSettings>` and updater methods.
-- **`ui/screens/SettingsScreen.kt`, `NotificationSettingsScreen.kt`, `NotificationScreen.kt` & `StatsScreen.kt`**: Material 3 settings, stats, and status screens with Scaffold TopAppBar, categorized section cards, permission status checks, switches, dropdowns, listening time, bar charts, artist breakdown percentages, and test notification dispatch.
-- **Audio Effects & Playback Pipeline Wiring (`MusicPlayerService.kt` & `PlayerViewModel.kt`)**: Attached `android.media.audiofx.Equalizer`, `BassBoost`, `Virtualizer`, and `LoudnessEnhancer` to the active `audioSessionId` with automatic lifecycle re-binding. Consolidated in-app `EqualizerDialog` in `NowPlayingBottomSheet.kt` with `SettingsDataStore`.
-- **Folder Exclusion & Scanner Pipeline (`MediaScanner.kt` & `MusicRepository.kt`)**: Filtered excluded folders both at scan-time and reactively in `cachedAudioFlow` so library updates immediately upon user preference change.
-- **Crossfade Approximation & Playback Speed**: Ramped volume down/up based on `crossfadeDuration` window in progress tracker, and applied `PlaybackParameters(speed)` on `ExoPlayer`/`MediaController`.
-- **`ui/viewmodel/StatsViewModel.kt` & `PlayerViewModel.kt`**: Real-time stats aggregation across time intervals ("Continuous", "1 week", "1 month", "3 months") and automatic play count/listening time increments upon track playback.
-- **Room Database Migration (v3)**: Added `plays`, `lastPlayed`, and `totalTime` columns to `audio` table with `MIGRATION_2_3`.
-- **Navigation Integration**: Linked via `Screen.Settings`, `Screen.NotificationSettings`, `Screen.Notifications`, and `Screen.Stats` routes, header settings and stats icons in `HomeScreen`, and NavHost in `MainActivity`.
+## 4. Key Workflows
 
----
+### 4.1 Playback Workflow
+1. User taps a track on any screen.
+2. `MainActivity` forwards request to `PlayerViewModel.play(song, playlist)`.
+3. `PlayerViewModel` verifies physical file existence and builds Media3 `MediaItem` list.
+4. `MediaController` issues `setMediaItems`, `prepare`, and `play` to `MusicPlayerService`.
+5. Service handles audio focus, routes through active `AudioEffect`s, and begins ExoPlayer output.
+6. `PlayerViewModel` starts progress tracking and background Palette color extraction.
+7. Mini player animates in; expanding opens full-screen player with adaptive gradient.
 
-## 6. Recent Fixes & Features
-
-### 1. Gesture Support Across Music Player
-- **Mini Player Horizontal Swipe**: Added horizontal drag gestures with ~100dp threshold to skip tracks (Swipe Left $\rightarrow$ Next, Swipe Right $\rightarrow$ Previous) with spring physics and non-blocking tap-to-expand.
-- **Full Player Swipe-Down to Collapse**: Added vertical drag gestures with ~150dp threshold on Album Art card to collapse player smoothly without conflicting with bottom sheet content.
-- **Song List Swipe Actions**: Integrated `SwipeToDismissBox` across `HomeScreen`, `SearchScreen`, `LibraryScreen`, and `PlaylistDetailScreen`:
-  - Swipe Left (All Screens): Opens "Add to Playlist" dialog.
-  - Swipe Right (PlaylistDetailScreen): Removes track from the playlist.
+### 4.2 Metadata Editing Workflow
+1. User clicks the Edit (Pencil) icon on a track row or selects "Edit Song Details" in the full player menu.
+2. `EditSongMetadataDialog` opens with current artist name and album art preview.
+3. User modifies artist name and/or picks a new image via `rememberLauncherForActivityResult(PickVisualMedia)`.
+4. The picked image is copied to app internal files (`/files/artwork_<id>_<timestamp>.jpg`).
+5. `PlayerViewModel.updateSongCustomMetadata()` persists custom attributes to Room DB.
+6. The UI reactively updates across all screens (`HomeScreen`, `SearchScreen`, `LibraryScreen`, `NowPlayingBottomSheet`).

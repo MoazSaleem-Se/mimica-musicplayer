@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -378,6 +379,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         startProgressTracker()
 
         viewModelScope.launch(Dispatchers.IO) {
+            Log.d("StatsDebug", "incrementStats called for songId: ${song.id}")
             audioDao.incrementStats(song.id, System.currentTimeMillis(), song.duration)
         }
     }

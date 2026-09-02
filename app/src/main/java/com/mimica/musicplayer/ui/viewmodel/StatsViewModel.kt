@@ -1,6 +1,7 @@
 package com.mimica.musicplayer.ui.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mimica.musicplayer.data.local.AppDatabase
@@ -9,6 +10,7 @@ import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.local.DayStats
 import com.mimica.musicplayer.data.local.HourStats
 import com.mimica.musicplayer.data.local.StatsSummary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
 
@@ -29,6 +32,18 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedTimeRange = MutableStateFlow("Continuous")
     val selectedTimeRange: StateFlow<String> = _selectedTimeRange.asStateFlow()
+
+    init {
+        loadStats()
+    }
+
+    fun loadStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            audioDao.getStatsSummary(0L).collect { summary ->
+                Log.d("StatsDebug", "Stats loaded: totalTime: ${summary.totalTimeListened}")
+            }
+        }
+    }
 
     private val sinceTimestampFlow = _selectedTimeRange.map { range ->
         val now = System.currentTimeMillis()
