@@ -26,6 +26,9 @@ interface PlaylistDao {
     @Update
     suspend fun updatePlaylist(playlist: PlaylistEntity)
 
+    @Query("UPDATE playlists SET customArtworkUri = :customArtworkUri WHERE id = :id")
+    suspend fun updateCustomArtwork(id: Long, customArtworkUri: String?)
+
     @Delete
     suspend fun deletePlaylist(playlist: PlaylistEntity)
 

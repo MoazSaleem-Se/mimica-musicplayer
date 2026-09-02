@@ -23,10 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,7 +51,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,11 +61,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.local.PlaylistEntity
 import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
+import com.mimica.musicplayer.ui.components.EditPlaylistArtworkDialog
+import com.mimica.musicplayer.ui.components.EditSongMetadataDialog
+import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -74,13 +80,16 @@ import java.util.concurrent.TimeUnit
 fun PlaylistDetailScreen(
     playlist: PlaylistEntity,
     playlistViewModel: PlaylistViewModel,
+    playerViewModel: PlayerViewModel = viewModel(),
     onBack: () -> Unit,
     onAudioClick: (AudioEntity, List<AudioEntity>) -> Unit
 ) {
     val context = LocalContext.current
     val playlistSongs by playlistViewModel.getSongsForPlaylist(playlist.id).collectAsState(initial = emptyList())
     var showDeletePlaylistDialog by remember { mutableStateOf(false) }
+    var showEditArtworkDialog by remember { mutableStateOf(false) }
     var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
+    var songToEdit by remember { mutableStateOf<AudioEntity?>(null) }
 
     val totalDurationMs = remember(playlistSongs) {
         playlistSongs.sumOf { it.duration }
@@ -125,6 +134,14 @@ fun PlaylistDetailScreen(
                     .padding(horizontal = 8.dp)
             )
 
+            IconButton(onClick = { showEditArtworkDialog = true }) {
+                Icon(
+                    imageVector = Icons.Default.Image,
+                    contentDescription = "Edit Playlist Cover",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
             IconButton(onClick = { showDeletePlaylistDialog = true }) {
                 Icon(
                     imageVector = Icons.Default.DeleteOutline,
@@ -149,6 +166,37 @@ fun PlaylistDetailScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Playlist Cover thumbnail (clickable to edit)
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .clickable { showEditArtworkDialog = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!playlist.customArtworkUri.isNullOrEmpty()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(playlist.customArtworkUri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = playlist.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize()
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "${playlistSongs.size} tracks",
@@ -234,20 +282,17 @@ fun PlaylistDetailScreen(
                         confirmValueChange = { dismissValue ->
                             when (dismissValue) {
                                 SwipeToDismissBoxValue.EndToStart -> {
-                                    // Swipe Left -> Add to Another Playlist
                                     songForPlaylistDialog = audio
                                     coroutineScope.launch { dismissStateRef.reset() }
-                                    false
                                 }
                                 SwipeToDismissBoxValue.StartToEnd -> {
-                                    // Swipe Right -> Remove from Current Playlist
                                     playlistViewModel.removeSongFromPlaylist(playlist.id, audio.id)
-                                    Toast.makeText(context, "Removed '${audio.title}' from ${playlist.name}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Removed from ${playlist.name}", Toast.LENGTH_SHORT).show()
                                     coroutineScope.launch { dismissStateRef.reset() }
-                                    false
                                 }
-                                else -> false
+                                else -> {}
                             }
+                            false
                         }
                     )
                     dismissStateRef = dismissState
@@ -298,6 +343,7 @@ fun PlaylistDetailScreen(
                     ) {
                         PlaylistSongItemContent(
                             audio = audio,
+                            onEditClick = { songToEdit = audio },
                             onClick = {
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -345,11 +391,31 @@ fun PlaylistDetailScreen(
         )
     }
 
+    if (showEditArtworkDialog) {
+        EditPlaylistArtworkDialog(
+            playlist = playlist,
+            onDismiss = { showEditArtworkDialog = false },
+            onSave = { newArtwork ->
+                playlistViewModel.updatePlaylistArtwork(playlist.id, newArtwork)
+            }
+        )
+    }
+
     if (songForPlaylistDialog != null) {
         AddToPlaylistDialog(
             song = songForPlaylistDialog!!,
             playlistViewModel = playlistViewModel,
             onDismiss = { songForPlaylistDialog = null }
+        )
+    }
+
+    if (songToEdit != null) {
+        EditSongMetadataDialog(
+            song = songToEdit!!,
+            onDismiss = { songToEdit = null },
+            onSave = { newArtist, newArtwork ->
+                playerViewModel.updateSongCustomMetadata(songToEdit!!.id, newArtist, newArtwork)
+            }
         )
     }
 }
@@ -358,7 +424,8 @@ fun PlaylistDetailScreen(
 fun PlaylistSongItemContent(
     audio: AudioEntity,
     onClick: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onEditClick: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier
@@ -374,7 +441,7 @@ fun PlaylistSongItemContent(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -384,10 +451,10 @@ fun PlaylistSongItemContent(
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (!audio.albumArtUri.isNullOrEmpty()) {
+                if (!audio.displayArtworkUri.isNullOrEmpty()) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(audio.albumArtUri)
+                            .data(audio.displayArtworkUri)
                             .crossfade(true)
                             .build(),
                         contentDescription = audio.title,
@@ -404,7 +471,7 @@ fun PlaylistSongItemContent(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -416,7 +483,7 @@ fun PlaylistSongItemContent(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${audio.artist} • ${audio.album}",
+                    text = "${audio.displayArtist} • ${audio.album}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -424,17 +491,41 @@ fun PlaylistSongItemContent(
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            Text(
-                text = audio.durationFormatted,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // File format badge and duration
+            Column(horizontalAlignment = Alignment.End) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = audio.fileFormat,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = audio.durationFormatted,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            Spacer(modifier = Modifier.width(4.dp))
+            if (onEditClick != null) {
+                IconButton(onClick = onEditClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Song",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
-            IconButton(onClick = onRemove) {
+            IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Default.DeleteOutline,
                     contentDescription = "Remove Track",

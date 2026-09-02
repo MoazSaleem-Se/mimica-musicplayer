@@ -14,7 +14,7 @@ class MediaScanner(private val context: Context) {
 
     /**
      * Scans local audio files from MediaStore using ContentResolver.
-     * Extracts title, artist, album, duration, file path, and album art URI.
+     * Extracts title, artist, album, duration, file path, MIME type / format, and album art URI.
      * Robustly skips corrupted entries and files residing in excluded folders.
      */
     suspend fun scanLocalMusic(excludedFolders: Set<String> = emptySet()): List<AudioEntity> = withContext(Dispatchers.IO) {
@@ -34,7 +34,8 @@ class MediaScanner(private val context: Context) {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.ALBUM_ID
+            MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.MIME_TYPE
         )
 
         // Filter for music files with duration >= 10 seconds (excludes ringtones and alert sounds)
@@ -56,6 +57,7 @@ class MediaScanner(private val context: Context) {
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+                val mimeTypeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
 
                 while (cursor.moveToNext()) {
                     try {
@@ -66,11 +68,15 @@ class MediaScanner(private val context: Context) {
                         val duration = cursor.getLong(durationColumn)
                         val filePath = cursor.getString(dataColumn) ?: ""
                         val albumId = cursor.getLong(albumIdColumn)
+                        val mimeType = if (mimeTypeColumn != -1) cursor.getString(mimeTypeColumn) else null
 
                         // Check if file is inside an excluded folder
                         if (isPathExcluded(filePath, excludedFolders)) {
                             continue
                         }
+
+                        // Determine file format display label
+                        val fileFormat = extractFileFormat(mimeType, filePath)
 
                         // Album art URI using MediaStore.Audio.Albums
                         val albumArtUri = if (albumId > 0) {
@@ -91,7 +97,8 @@ class MediaScanner(private val context: Context) {
                                     duration = duration,
                                     filePath = filePath,
                                     albumArtUri = albumArtUri,
-                                    albumId = albumId
+                                    albumId = albumId,
+                                    fileFormat = fileFormat
                                 )
                             )
                         }
@@ -130,6 +137,25 @@ class MediaScanner(private val context: Context) {
                 val cleanExcluded = excluded.trim().removeSuffix("/")
                 filePath.equals(cleanExcluded, ignoreCase = true) ||
                         filePath.startsWith("$cleanExcluded/", ignoreCase = true)
+            }
+        }
+
+        fun extractFileFormat(mimeType: String?, filePath: String): String {
+            val mime = mimeType?.lowercase()?.trim() ?: ""
+            return when {
+                mime == "audio/mpeg" || mime == "audio/mp3" -> "MP3"
+                mime == "audio/flac" || mime == "audio/x-flac" -> "FLAC"
+                mime == "audio/x-wav" || mime == "audio/wav" -> "WAV"
+                mime == "audio/ogg" || mime == "application/ogg" || mime == "audio/vorbis" -> "OGG"
+                mime == "audio/mp4" || mime == "audio/m4a" -> "M4A"
+                mime == "audio/aac" || mime == "audio/aacp" -> "AAC"
+                mime == "audio/opus" -> "OPUS"
+                mime == "audio/3gpp" || mime == "audio/amr" -> "AMR"
+                mime == "audio/midi" || mime == "audio/mid" -> "MIDI"
+                else -> {
+                    val ext = filePath.substringAfterLast('.', "").uppercase().trim()
+                    if (ext.isNotBlank() && ext.length in 2..5) ext else "MP3"
+                }
             }
         }
     }

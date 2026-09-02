@@ -9,5 +9,6 @@ data class PlaylistEntity(
     val id: Long = 0L,
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val songCount: Int = 0
+    val songCount: Int = 0,
+    val customArtworkUri: String? = null
 )

@@ -335,7 +335,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         _currentPlaylist.value = effectivePlaylist
 
-        extractPalette(song.albumArtUri, song.id)
+        extractPalette(song.displayArtworkUri, song.id)
 
         val controller = mediaController
         if (controller == null) {
@@ -350,9 +350,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val mediaItems = effectivePlaylist.map { item ->
             val mediaMetadata = MediaMetadata.Builder()
                 .setTitle(item.title)
-                .setArtist(item.artist)
+                .setArtist(item.displayArtist)
                 .setAlbumTitle(item.album)
-                .setArtworkUri(item.albumArtUri?.let { Uri.parse(it) })
+                .setArtworkUri(item.displayArtworkUri?.let { Uri.parse(it) })
                 .build()
 
             MediaItem.Builder()
@@ -552,6 +552,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun stopProgressTracker() {
         progressJob?.cancel()
         progressJob = null
+    }
+
+    fun updateSongCustomMetadata(songId: Long, customArtist: String?, customArtworkUri: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            audioDao.updateCustomMetadata(songId, customArtist, customArtworkUri)
+            val updated = audioDao.getAudioById(songId)
+            withContext(Dispatchers.Main) {
+                if (_currentSong.value?.id == songId && updated != null) {
+                    _currentSong.value = updated
+                    extractPalette(updated.displayArtworkUri, updated.id)
+                }
+                _currentPlaylist.value = _currentPlaylist.value.map {
+                    if (it.id == songId && updated != null) updated else it
+                }
+            }
+        }
     }
 
     override fun onCleared() {

@@ -65,16 +65,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.data.local.PlaylistEntity
 import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
+import com.mimica.musicplayer.ui.components.EditPlaylistArtworkDialog
+import com.mimica.musicplayer.ui.components.EditSongMetadataDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +95,8 @@ fun LibraryScreen(
     var selectedPlaylistForDetail by remember { mutableStateOf<PlaylistEntity?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
+    var songToEdit by remember { mutableStateOf<AudioEntity?>(null) }
+    var playlistToEditArtwork by remember { mutableStateOf<PlaylistEntity?>(null) }
 
     val songs: List<AudioEntity> = remember(scanState) {
         when (val state = scanState) {
@@ -105,7 +109,7 @@ fun LibraryScreen(
     val filters = listOf("All Tracks", "Playlists", "Artists", "Albums")
 
     val artistGroups = remember(songs) {
-        songs.groupBy { it.artist }.toList().sortedBy { it.first.lowercase() }
+        songs.groupBy { it.displayArtist }.toList().sortedBy { it.first.lowercase() }
     }
 
     val albumGroups = remember(songs) {
@@ -117,6 +121,7 @@ fun LibraryScreen(
         PlaylistDetailScreen(
             playlist = selectedPlaylistForDetail!!,
             playlistViewModel = playlistViewModel,
+            playerViewModel = playerViewModel,
             onBack = { selectedPlaylistForDetail = null },
             onAudioClick = onAudioClick
         )
@@ -198,13 +203,6 @@ fun LibraryScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.QueueMusic,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(56.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Library is Empty",
                         style = MaterialTheme.typography.titleLarge,
@@ -213,16 +211,14 @@ fun LibraryScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Scan your device storage from the Home screen to populate your library.",
+                        text = "Rescan to populate songs or create playlists.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     OutlinedButton(onClick = { scanViewModel.scanMusic() }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "Scan Music Now")
+                        Text("Scan Device")
                     }
                 }
             } else {
@@ -234,7 +230,7 @@ fun LibraryScreen(
                         ) {
                             item {
                                 Text(
-                                    text = "${songs.size} Total Songs",
+                                    text = "${songs.size} Songs",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
@@ -287,6 +283,7 @@ fun LibraryScreen(
                                     ScannedSongListItemContent(
                                         audio = audio,
                                         isPlaying = isSongPlaying,
+                                        onEditClick = { songToEdit = audio },
                                         onClick = {
                                             if (audio.filePath.isBlank()) {
                                                 Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -331,7 +328,7 @@ fun LibraryScreen(
                                     title = "All Scanned Music",
                                     subtitle = "${songs.size} tracks • Local storage",
                                     icon = Icons.Default.Folder,
-                                    artUri = songs.firstOrNull { !it.albumArtUri.isNullOrEmpty() }?.albumArtUri,
+                                    artUri = songs.firstOrNull { !it.displayArtworkUri.isNullOrEmpty() }?.displayArtworkUri,
                                     onClick = {
                                         val first = songs.firstOrNull()
                                         if (first != null && first.filePath.isNotBlank()) {
@@ -348,6 +345,7 @@ fun LibraryScreen(
                                     title = pl.name,
                                     subtitle = "${pl.songCount} tracks",
                                     icon = Icons.Default.QueueMusic,
+                                    artUri = pl.customArtworkUri,
                                     onClick = {
                                         selectedPlaylistForDetail = pl
                                     }
@@ -375,7 +373,7 @@ fun LibraryScreen(
                                     title = artist,
                                     subtitle = "${artistSongs.size} tracks",
                                     icon = Icons.Default.Person,
-                                    artUri = artistSongs.firstOrNull { !it.albumArtUri.isNullOrEmpty() }?.albumArtUri,
+                                    artUri = artistSongs.firstOrNull { !it.displayArtworkUri.isNullOrEmpty() }?.displayArtworkUri,
                                     onClick = {
                                         val firstTrack = artistSongs.firstOrNull()
                                         if (firstTrack != null && firstTrack.filePath.isNotBlank()) {
@@ -406,9 +404,9 @@ fun LibraryScreen(
                             items(albumGroups) { (album, albumSongs) ->
                                 LibraryGroupRowItem(
                                     title = album,
-                                    subtitle = "${albumSongs.firstOrNull()?.artist ?: "Unknown Artist"} • ${albumSongs.size} tracks",
+                                    subtitle = "${albumSongs.size} tracks",
                                     icon = Icons.Default.Album,
-                                    artUri = albumSongs.firstOrNull { !it.albumArtUri.isNullOrEmpty() }?.albumArtUri,
+                                    artUri = albumSongs.firstOrNull { !it.displayArtworkUri.isNullOrEmpty() }?.displayArtworkUri,
                                     onClick = {
                                         val firstTrack = albumSongs.firstOrNull()
                                         if (firstTrack != null && firstTrack.filePath.isNotBlank()) {
@@ -426,24 +424,25 @@ fun LibraryScreen(
         }
     }
 
+    // Create Playlist Dialog
     if (showCreatePlaylistDialog) {
         var playlistNameInput by remember { mutableStateOf("") }
+
         AlertDialog(
             onDismissRequest = { showCreatePlaylistDialog = false },
-            icon = {
-                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            },
-            title = { Text("New Playlist", fontWeight = FontWeight.Bold) },
+            title = { Text("New Playlist") },
             text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text("Enter a name for your new playlist:")
+                Column {
+                    Text(
+                        text = "Enter a name for your new playlist:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = playlistNameInput,
                         onValueChange = { playlistNameInput = it },
-                        placeholder = { Text("e.g. Chill Beats") },
+                        placeholder = { Text("Playlist Name") },
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -475,6 +474,26 @@ fun LibraryScreen(
             song = songForPlaylistDialog!!,
             playlistViewModel = playlistViewModel,
             onDismiss = { songForPlaylistDialog = null }
+        )
+    }
+
+    if (songToEdit != null) {
+        EditSongMetadataDialog(
+            song = songToEdit!!,
+            onDismiss = { songToEdit = null },
+            onSave = { newArtist, newArtwork ->
+                playerViewModel.updateSongCustomMetadata(songToEdit!!.id, newArtist, newArtwork)
+            }
+        )
+    }
+
+    if (playlistToEditArtwork != null) {
+        EditPlaylistArtworkDialog(
+            playlist = playlistToEditArtwork!!,
+            onDismiss = { playlistToEditArtwork = null },
+            onSave = { newArtwork ->
+                playlistViewModel.updatePlaylistArtwork(playlistToEditArtwork!!.id, newArtwork)
+            }
         )
     }
 }

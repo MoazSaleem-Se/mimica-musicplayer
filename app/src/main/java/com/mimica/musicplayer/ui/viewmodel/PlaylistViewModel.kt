@@ -69,6 +69,12 @@ class PlaylistViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun updatePlaylistArtwork(playlistId: Long, customArtworkUri: String?) {
+        viewModelScope.launch {
+            playlistDao.updateCustomArtwork(playlistId, customArtworkUri)
+        }
+    }
+
     fun getSongsForPlaylist(playlistId: Long): Flow<List<AudioEntity>> {
         return playlistSongDao.getSongsForPlaylist(playlistId)
     }

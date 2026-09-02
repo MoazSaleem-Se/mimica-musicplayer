@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 data class ArtistStats(
@@ -35,6 +36,12 @@ data class HourStats(
     val plays: Int
 )
 
+data class AudioCustomMetadata(
+    val id: Long,
+    val customArtistName: String?,
+    val customArtworkUri: String?
+)
+
 @Dao
 interface AudioDao {
 
@@ -52,6 +59,15 @@ interface AudioDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(audio: AudioEntity)
+
+    @Update
+    suspend fun update(audio: AudioEntity)
+
+    @Query("UPDATE audio SET customArtistName = :customArtistName, customArtworkUri = :customArtworkUri WHERE id = :id")
+    suspend fun updateCustomMetadata(id: Long, customArtistName: String?, customArtworkUri: String?)
+
+    @Query("SELECT id, customArtistName, customArtworkUri FROM audio WHERE customArtistName IS NOT NULL OR customArtworkUri IS NOT NULL")
+    suspend fun getCustomMetadataList(): List<AudioCustomMetadata>
 
     @Delete
     suspend fun delete(audio: AudioEntity)

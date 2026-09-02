@@ -17,8 +17,17 @@ data class AudioEntity(
     val albumId: Long = 0L,
     val plays: Int = 0,
     val lastPlayed: Long = 0L,
-    val totalTime: Long = 0L
+    val totalTime: Long = 0L,
+    val customArtworkUri: String? = null,
+    val customArtistName: String? = null,
+    val fileFormat: String = "MP3"
 ) {
+    val displayArtist: String
+        get() = customArtistName?.takeIf { it.isNotBlank() } ?: artist
+
+    val displayArtworkUri: String?
+        get() = customArtworkUri?.takeIf { it.isNotBlank() } ?: albumArtUri
+
     val durationFormatted: String
         get() {
             val minutes = TimeUnit.MILLISECONDS.toMinutes(duration)

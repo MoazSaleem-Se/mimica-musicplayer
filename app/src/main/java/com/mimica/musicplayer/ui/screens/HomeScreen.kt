@@ -47,6 +47,12 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -85,10 +92,12 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
+import com.mimica.musicplayer.ui.components.EditSongMetadataDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
 import com.mimica.musicplayer.ui.viewmodel.ScanUiState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -108,6 +117,7 @@ fun HomeScreen(
     val context = LocalContext.current
 
     var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
+    var songToEdit by remember { mutableStateOf<AudioEntity?>(null) }
 
     // Dynamic greeting based on current time
     val greeting = remember {
@@ -327,6 +337,7 @@ fun HomeScreen(
                             ScannedSongListItemContent(
                                 audio = audio,
                                 isPlaying = isSongPlaying,
+                                onEditClick = { songToEdit = audio },
                                 onClick = {
                                     if (isCurrentSong) {
                                         playerViewModel.togglePlayPause()
@@ -385,6 +396,17 @@ fun HomeScreen(
             song = songForPlaylistDialog!!,
             playlistViewModel = playlistViewModel,
             onDismiss = { songForPlaylistDialog = null }
+        )
+    }
+
+    // Edit Song Details Dialog
+    if (songToEdit != null) {
+        EditSongMetadataDialog(
+            song = songToEdit!!,
+            onDismiss = { songToEdit = null },
+            onSave = { newArtist, newArtwork ->
+                playerViewModel.updateSongCustomMetadata(songToEdit!!.id, newArtist, newArtwork)
+            }
         )
     }
 }
@@ -463,7 +485,7 @@ fun HomeHeaderSection(
 }
 
 // -------------------------------------------------------------------------
-// 2. Quick Picks Section (Horizontal Carousel with 160dp Large Cards)
+// 2. Quick Picks Section (Horizontal Carousel with 180dp Large Cards & Snap Fling)
 // -------------------------------------------------------------------------
 
 @Composable
@@ -473,6 +495,9 @@ fun QuickPicksSection(
     isPlaying: Boolean,
     onSongClick: (AudioEntity) -> Unit
 ) {
+    val lazyListState = rememberLazyListState()
+    val snapFlingBehavior = rememberSnapFlingBehavior(lazyListState = lazyListState)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -486,18 +511,36 @@ fun QuickPicksSection(
         )
 
         LazyRow(
+            state = lazyListState,
+            flingBehavior = snapFlingBehavior,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(songs, key = { "quick_${it.id}" }) { song ->
+            itemsIndexed(songs, key = { _, it -> "quick_${it.id}" }) { index, song ->
                 val isSongActive = currentSong?.id == song.id
                 val isTrackPlaying = isSongActive && isPlaying
 
-                QuickPickCard(
-                    song = song,
-                    isPlaying = isTrackPlaying,
-                    onClick = { onSongClick(song) }
-                )
+                val entranceAnim = remember { Animatable(0f) }
+                LaunchedEffect(song.id) {
+                    delay(index * 35L)
+                    entranceAnim.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = 350f)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier.graphicsLayer {
+                        alpha = entranceAnim.value
+                        translationX = (1f - entranceAnim.value) * 60f
+                    }
+                ) {
+                    QuickPickCard(
+                        song = song,
+                        isPlaying = isTrackPlaying,
+                        onClick = { onSongClick(song) }
+                    )
+                }
             }
         }
     }
@@ -511,7 +554,7 @@ fun QuickPickCard(
 ) {
     Card(
         modifier = Modifier
-            .size(width = 160.dp, height = 160.dp)
+            .size(width = 180.dp, height = 180.dp)
             .shadow(4.dp, RoundedCornerShape(16.dp))
             .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
@@ -521,10 +564,10 @@ fun QuickPickCard(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // Album Art Background
-            if (!song.albumArtUri.isNullOrEmpty()) {
+            if (!song.displayArtworkUri.isNullOrEmpty()) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(song.albumArtUri)
+                        .data(song.displayArtworkUri)
                         .crossfade(true)
                         .build(),
                     contentDescription = song.title,
@@ -604,7 +647,7 @@ fun QuickPickCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = song.artist,
+                    text = song.displayArtist,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.8f),
                     maxLines = 1,
@@ -687,10 +730,10 @@ fun KeepListeningCard(
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (!song.albumArtUri.isNullOrEmpty()) {
+                if (!song.displayArtworkUri.isNullOrEmpty()) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(song.albumArtUri)
+                            .data(song.displayArtworkUri)
                             .crossfade(true)
                             .build(),
                         contentDescription = song.title,
@@ -718,7 +761,7 @@ fun KeepListeningCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = song.artist,
+                    text = song.displayArtist,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -746,7 +789,8 @@ fun KeepListeningCard(
 fun ScannedSongListItemContent(
     audio: AudioEntity,
     isPlaying: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onEditClick: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier
@@ -762,20 +806,20 @@ fun ScannedSongListItemContent(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(52.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (!audio.albumArtUri.isNullOrEmpty()) {
+                if (!audio.displayArtworkUri.isNullOrEmpty()) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(audio.albumArtUri)
+                            .data(audio.displayArtworkUri)
                             .crossfade(true)
                             .build(),
                         contentDescription = audio.title,
@@ -792,7 +836,7 @@ fun ScannedSongListItemContent(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -804,7 +848,7 @@ fun ScannedSongListItemContent(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${audio.artist} • ${audio.album}",
+                    text = "${audio.displayArtist} • ${audio.album}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -812,17 +856,41 @@ fun ScannedSongListItemContent(
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            Text(
-                text = audio.durationFormatted,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // File format badge and duration
+            Column(horizontalAlignment = Alignment.End) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = audio.fileFormat,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = audio.durationFormatted,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            Spacer(modifier = Modifier.width(4.dp))
+            if (onEditClick != null) {
+                IconButton(onClick = onEditClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Song",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
-            IconButton(onClick = onClick) {
+            IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",

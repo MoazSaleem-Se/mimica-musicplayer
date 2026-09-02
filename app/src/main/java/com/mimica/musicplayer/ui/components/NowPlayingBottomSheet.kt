@@ -59,6 +59,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -118,6 +119,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -226,6 +228,7 @@ fun NowPlayingBottomSheet(
                 playbackError = playbackError,
                 palette = albumPalette,
                 activeSleepTimerMinutes = sleepTimerMinutes,
+                playerViewModel = playerViewModel,
                 onPlayPauseClick = { playerViewModel.togglePlayPause() },
                 onNextClick = { playerViewModel.skipToNext() },
                 onPreviousClick = { playerViewModel.skipToPrevious() },
@@ -256,20 +259,22 @@ fun MiniPlayerContent(
     palette: Palette?,
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
-    onPreviousClick: () -> Unit = {},
+    onPreviousClick: () -> Unit,
     onClick: () -> Unit,
     onImageLoaded: (android.graphics.Bitmap) -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val thresholdPx = with(density) { 100.dp.toPx() }
+    val thresholdPx = with(density) { 50.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
 
+    val defaultSurface = MaterialTheme.colorScheme.surfaceVariant
     val defaultPrimary = MaterialTheme.colorScheme.primary
-    val vibrantColor = remember(palette, defaultPrimary) {
-        palette?.let { Color(it.getVibrantColor(defaultPrimary.toArgb())) } ?: defaultPrimary
-    }
-    val animatedVibrant by animateColorAsState(vibrantColor, tween(400), label = "MiniVibrant")
+    val animatedVibrant by animateColorAsState(
+        targetValue = palette?.let { Color(it.getVibrantColor(defaultPrimary.toArgb())) } ?: defaultPrimary,
+        animationSpec = tween(400),
+        label = "MiniVibrantAnimation"
+    )
 
     val totalDuration = if (duration > 0) duration else song.duration.coerceAtLeast(1L)
     val progress = (currentPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
@@ -277,15 +282,15 @@ fun MiniPlayerContent(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(80.dp)
+            .height(64.dp)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
             .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-            .pointerInput(song.id) {
-                Log.d("SwipeDebug", "PointerInput attached")
+            .pointerInput(Unit) {
+                val touchSlop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var totalDragX = 0f
                     var isDragging = false
-                    val touchSlop = viewConfiguration.touchSlop
 
                     while (true) {
                         val event = awaitPointerEvent()
@@ -293,30 +298,15 @@ fun MiniPlayerContent(
 
                         if (!change.pressed) {
                             if (!isDragging) {
-                                // Detected tap -> Expand player
-                                Log.d("SwipeDebug", "Tap detected")
                                 onClick()
                             } else {
-                                // Drag finished -> Evaluate swipe threshold
                                 coroutineScope.launch {
                                     if (offsetX.value < -thresholdPx) {
-                                        // Swiped Left -> Skip Next
-                                        Log.d("SwipeDebug", "Threshold exceeded! Left")
-                                        offsetX.animateTo(-250f, tween(150))
                                         onNextClick()
-                                        offsetX.snapTo(250f)
-                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
                                     } else if (offsetX.value > thresholdPx) {
-                                        // Swiped Right -> Skip Previous
-                                        Log.d("SwipeDebug", "Threshold exceeded! Right")
-                                        offsetX.animateTo(250f, tween(150))
                                         onPreviousClick()
-                                        offsetX.snapTo(-250f)
-                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
-                                    } else {
-                                        // Snap back if threshold not met
-                                        offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
                                     }
+                                    offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
                                 }
                             }
                             break
@@ -330,7 +320,6 @@ fun MiniPlayerContent(
                         }
 
                         if (isDragging) {
-                            Log.d("SwipeDebug", "Drag detected: $dragAmount")
                             change.consume()
                             coroutineScope.launch {
                                 offsetX.snapTo(offsetX.value + dragAmount)
@@ -358,10 +347,10 @@ fun MiniPlayerContent(
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!song.albumArtUri.isNullOrEmpty()) {
+                    if (!song.displayArtworkUri.isNullOrEmpty()) {
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
-                                .data(song.albumArtUri)
+                                .data(song.displayArtworkUri)
                                 .crossfade(500)
                                 .allowHardware(false)
                                 .build(),
@@ -398,7 +387,7 @@ fun MiniPlayerContent(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = song.artist,
+                        text = song.displayArtist,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -478,28 +467,15 @@ fun FullPlayerContent(
     onSetSleepTimer: (Int) -> Unit,
     onPlayTrack: (AudioEntity) -> Unit,
     onCollapse: () -> Unit,
-    onImageLoaded: (android.graphics.Bitmap) -> Unit = {}
+    onImageLoaded: (android.graphics.Bitmap) -> Unit = {},
+    playerViewModel: PlayerViewModel = viewModel()
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val collapseThresholdPx = with(density) { 150.dp.toPx() }
-    val dragOffsetY = remember { Animatable(0f) }
-
-    var showMenu by remember { mutableStateOf(false) }
-
+    var showEditMetadataDialog by remember { mutableStateOf(false) }
     var showPlaylistDialog by remember { mutableStateOf(false) }
     var showArtistDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showEqualizerDialog by remember { mutableStateOf(false) }
-
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
-    val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
-    var currentVolume by remember {
-        mutableFloatStateOf(
-            (audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10).toFloat() / maxVolume.toFloat()
-        )
-    }
 
     val defaultDarkBg = Color(0xFF1E1A26)
     val defaultBottomBg = Color(0xFF110E17)
@@ -530,16 +506,9 @@ fun FullPlayerContent(
 
     val targetArtistColor = remember(palette, defaultOnSurfaceVar) {
         palette?.let {
-            val colorInt = it.getLightMutedColor(it.getMutedColor(defaultOnSurfaceVar.toArgb()))
+            val colorInt = it.getMutedColor(it.getLightMutedColor(defaultOnSurfaceVar.toArgb()))
             Color(colorInt)
         } ?: defaultOnSurfaceVar
-    }
-
-    val targetVibrant = remember(palette, defaultPrimary) {
-        palette?.let {
-            val colorInt = it.getVibrantColor(defaultPrimary.toArgb())
-            Color(colorInt)
-        } ?: defaultPrimary
     }
 
     val targetLightVibrant = remember(palette, defaultPrimary) {
@@ -549,34 +518,24 @@ fun FullPlayerContent(
         } ?: defaultPrimary
     }
 
-    val animatedBgTop by animateColorAsState(targetBgTop, tween(400), label = "BgTop")
-    val animatedBgBottom by animateColorAsState(targetBgBottom, tween(400), label = "BgBottom")
+    val targetVibrant = remember(palette, defaultPrimary) {
+        palette?.let {
+            val colorInt = it.getVibrantColor(defaultPrimary.toArgb())
+            Color(colorInt)
+        } ?: defaultPrimary
+    }
+
+    val animatedBgTop by animateColorAsState(targetBgTop, tween(500), label = "BgTop")
+    val animatedBgBottom by animateColorAsState(targetBgBottom, tween(500), label = "BgBottom")
     val animatedTitleColor by animateColorAsState(targetTitleColor, tween(400), label = "TitleColor")
     val animatedArtistColor by animateColorAsState(targetArtistColor, tween(400), label = "ArtistColor")
-    val animatedVibrant by animateColorAsState(targetVibrant, tween(400), label = "Vibrant")
     val animatedLightVibrant by animateColorAsState(targetLightVibrant, tween(400), label = "LightVibrant")
-
-    val totalDuration = if (duration > 0) duration else song.duration.coerceAtLeast(1L)
-
-    var isSeeking by remember { mutableStateOf(false) }
-    var seekFraction by remember { mutableFloatStateOf(0f) }
-
-    val progressFraction = if (isSeeking) {
-        seekFraction
-    } else {
-        (currentPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
-    }
-
-    val currentDisplayPosition = if (isSeeking) {
-        (seekFraction * totalDuration).toLong()
-    } else {
-        currentPosition
-    }
+    val animatedVibrant by animateColorAsState(targetVibrant, tween(400), label = "Vibrant")
 
     val nextSong = remember(currentPlaylist, song) {
-        val index = currentPlaylist.indexOfFirst { it.id == song.id }
-        if (index != -1 && currentPlaylist.size > 1) {
-            currentPlaylist[(index + 1) % currentPlaylist.size]
+        val idx = currentPlaylist.indexOfFirst { it.id == song.id }
+        if (idx != -1 && idx + 1 < currentPlaylist.size) {
+            currentPlaylist[idx + 1]
         } else null
     }
 
@@ -590,455 +549,84 @@ fun FullPlayerContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // 1. TOP BAR
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onCollapse) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Collapse Player",
-                    modifier = Modifier.size(34.dp),
-                    tint = animatedTitleColor
-                )
-            }
-
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "PLAYING FROM YOUR MUSIC",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = animatedLightVibrant,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                )
-                Text(
-                    text = song.album.ifEmpty { "Local Tracks" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = animatedTitleColor,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Options",
-                        tint = animatedTitleColor,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Add to Playlist") },
-                        leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
-                        onClick = {
-                            showMenu = false
-                            showPlaylistDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("View Artist: ${song.artist}") },
-                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                        onClick = {
-                            showMenu = false
-                            showArtistDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Share Track") },
-                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                        onClick = {
-                            showMenu = false
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, "Listening to ${song.title}")
-                                putExtra(
-                                    Intent.EXTRA_TEXT,
-                                    "Now playing: \"${song.title}\" by ${song.artist} on Mimica Music Player 🎵"
-                                )
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (activeSleepTimerMinutes != null) "Sleep Timer: ${activeSleepTimerMinutes}m left" else "Sleep Timer"
-                            )
-                        },
-                        leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null) },
-                        onClick = {
-                            showMenu = false
-                            showSleepTimerDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Equalizer") },
-                        leadingIcon = { Icon(Icons.Default.Equalizer, contentDescription = null) },
-                        onClick = {
-                            showMenu = false
-                            try {
-                                val eqIntent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
-                                    putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
-                                    putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
-                                }
-                                context.startActivity(eqIntent)
-                            } catch (e: ActivityNotFoundException) {
-                                showEqualizerDialog = true
-                            }
-                        }
-                    )
-                }
-            }
-        }
+        FullPlayerTopBar(
+            song = song,
+            animatedTitleColor = animatedTitleColor,
+            animatedLightVibrant = animatedLightVibrant,
+            activeSleepTimerMinutes = activeSleepTimerMinutes,
+            onCollapse = onCollapse,
+            onOpenEditMetadata = { showEditMetadataDialog = true },
+            onOpenPlaylist = { showPlaylistDialog = true },
+            onOpenArtist = { showArtistDialog = true },
+            onOpenSleepTimer = { showSleepTimerDialog = true },
+            onOpenEqualizer = { showEqualizerDialog = true }
+        )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. LARGE ALBUM ART SECTION (With Swipe-Down to Collapse Gesture)
-        AnimatedContent(
-            targetState = song.id,
-            transitionSpec = {
-                (fadeIn(tween(400)) + scaleIn(initialScale = 0.92f, animationSpec = tween(400)))
-                    .togetherWith(fadeOut(tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
-            },
-            label = "AlbumArtTransition"
-        ) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth(0.68f)
-                    .aspectRatio(1f)
-                    .offset { IntOffset(0, dragOffsetY.value.roundToInt()) }
-                    .shadow(
-                        elevation = 12.dp,
-                        shape = RoundedCornerShape(24.dp),
-                        clip = false
-                    )
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onDragEnd = {
-                                coroutineScope.launch {
-                                    if (dragOffsetY.value >= collapseThresholdPx) {
-                                        onCollapse()
-                                        dragOffsetY.snapTo(0f)
-                                    } else {
-                                        dragOffsetY.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
-                                    }
-                                }
-                            },
-                            onDragCancel = {
-                                coroutineScope.launch {
-                                    dragOffsetY.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
-                                }
-                            },
-                            onVerticalDrag = { change, dragAmount ->
-                                if (dragAmount > 0 || dragOffsetY.value > 0) {
-                                    change.consume()
-                                    coroutineScope.launch {
-                                        dragOffsetY.snapTo((dragOffsetY.value + dragAmount).coerceAtLeast(0f))
-                                    }
-                                }
-                            }
-                        )
-                    },
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!song.albumArtUri.isNullOrEmpty()) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(song.albumArtUri)
-                                .crossfade(500)
-                                .allowHardware(false)
-                                .build(),
-                            contentDescription = song.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.matchParentSize(),
-                            onSuccess = { success ->
-                                val bitmap = (success.result.drawable as? BitmapDrawable)?.bitmap
-                                if (bitmap != null) {
-                                    onImageLoaded(bitmap)
-                                }
-                            }
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(88.dp)
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(80.dp)
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.40f))
-                                )
-                            )
-                    )
-                }
-            }
-        }
+        FullPlayerAlbumArt(
+            song = song,
+            onNextClick = onNextClick,
+            onPreviousClick = onPreviousClick,
+            onCollapse = onCollapse,
+            onImageLoaded = onImageLoaded
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 3. SONG INFO SECTION
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = animatedTitleColor,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+        FullPlayerSongInfo(
+            song = song,
+            animatedTitleColor = animatedTitleColor,
+            animatedArtistColor = animatedArtistColor,
+            animatedLightVibrant = animatedLightVibrant,
+            playbackError = playbackError
+        )
 
-            Spacer(modifier = Modifier.height(6.dp))
+        FullPlayerSeekBar(
+            currentPosition = currentPosition,
+            duration = duration,
+            songDuration = song.duration,
+            animatedLightVibrant = animatedLightVibrant,
+            animatedVibrant = animatedVibrant,
+            animatedArtistColor = animatedArtistColor,
+            onSeek = onSeek
+        )
 
-            Text(
-                text = song.artist,
-                style = MaterialTheme.typography.titleMedium,
-                color = animatedArtistColor,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        FullPlayerControls(
+            isPlaying = isPlaying,
+            isShuffle = isShuffle,
+            isRepeat = isRepeat,
+            animatedTitleColor = animatedTitleColor,
+            animatedArtistColor = animatedArtistColor,
+            animatedLightVibrant = animatedLightVibrant,
+            animatedVibrant = animatedVibrant,
+            onShuffleClick = onShuffleClick,
+            onPreviousClick = onPreviousClick,
+            onPlayPauseClick = onPlayPauseClick,
+            onNextClick = onNextClick,
+            onRepeatClick = onRepeatClick
+        )
 
-        if (playbackError != null) {
-            Text(
-                text = playbackError,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        // 4. SEEK BAR SECTION
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Slider(
-                value = progressFraction,
-                onValueChange = { frac ->
-                    isSeeking = true
-                    seekFraction = frac
-                },
-                onValueChangeFinished = {
-                    isSeeking = false
-                    val targetMs = (seekFraction * totalDuration).toLong()
-                    onSeek(targetMs)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = SliderDefaults.colors(
-                    thumbColor = animatedLightVibrant,
-                    activeTrackColor = animatedVibrant,
-                    inactiveTrackColor = animatedVibrant.copy(alpha = 0.25f)
-                )
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = formatTime(currentDisplayPosition),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = animatedArtistColor.copy(alpha = 0.8f),
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = formatTime(totalDuration),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = animatedArtistColor.copy(alpha = 0.8f),
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-
-        // 5. PLAYBACK CONTROLS
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AnimatedScaleIconButton(
-                onClick = onShuffleClick,
-                size = 46.dp
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Shuffle,
-                    contentDescription = "Shuffle",
-                    tint = if (isShuffle) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.5f),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            AnimatedScaleIconButton(
-                onClick = onPreviousClick,
-                size = 52.dp
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SkipPrevious,
-                    contentDescription = "Previous Track",
-                    modifier = Modifier.size(34.dp),
-                    tint = animatedTitleColor
-                )
-            }
-
-            Surface(
-                onClick = onPlayPauseClick,
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape),
-                shape = CircleShape,
-                color = Color.Transparent
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Brush.linearGradient(listOf(animatedVibrant, animatedLightVibrant))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = isPlaying,
-                        transitionSpec = {
-                            (fadeIn(tween(200)) + scaleIn(tween(200)))
-                                .togetherWith(fadeOut(tween(200)) + scaleOut(tween(200)))
-                        },
-                        label = "PlayPauseMorph"
-                    ) { playing ->
-                        Icon(
-                            imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (playing) "Pause" else "Play",
-                            tint = Color.White,
-                            modifier = Modifier.size(38.dp)
-                        )
-                    }
-                }
-            }
-
-            AnimatedScaleIconButton(
-                onClick = onNextClick,
-                size = 52.dp
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SkipNext,
-                    contentDescription = "Next Track",
-                    modifier = Modifier.size(34.dp),
-                    tint = animatedTitleColor
-                )
-            }
-
-            AnimatedScaleIconButton(
-                onClick = onRepeatClick,
-                size = 46.dp
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Repeat,
-                    contentDescription = "Repeat",
-                    tint = if (isRepeat) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.5f),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-
-        // 6. VOLUME SLIDER & UP NEXT ROW
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(0.94f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = if (currentVolume > 0.5f) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeDown,
-                    contentDescription = "Volume",
-                    tint = animatedArtistColor.copy(alpha = 0.8f),
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Slider(
-                    value = currentVolume,
-                    onValueChange = { vol ->
-                        currentVolume = vol
-                        audioManager?.let { am ->
-                            val target = (vol * maxVolume).toInt()
-                            am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = animatedLightVibrant,
-                        activeTrackColor = animatedVibrant,
-                        inactiveTrackColor = animatedVibrant.copy(alpha = 0.2f)
-                    )
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                IconButton(
-                    onClick = onFavoriteClick,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = "Favorite",
-                        tint = if (isFavorite) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.6f),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            if (nextSong != null) {
-                Text(
-                    text = "Up Next: ${nextSong.title} • ${nextSong.artist}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = animatedArtistColor.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
+        FullPlayerVolumeAndUpNext(
+            isFavorite = isFavorite,
+            nextSong = nextSong,
+            animatedLightVibrant = animatedLightVibrant,
+            animatedVibrant = animatedVibrant,
+            animatedArtistColor = animatedArtistColor,
+            onFavoriteClick = onFavoriteClick
+        )
     }
 
-    // 1. Add to Playlist Dialog
+    if (showEditMetadataDialog) {
+        EditSongMetadataDialog(
+            song = song,
+            onDismiss = { showEditMetadataDialog = false },
+            onSave = { newArtist, newArtwork ->
+                playerViewModel.updateSongCustomMetadata(song.id, newArtist, newArtwork)
+            }
+        )
+    }
+
     if (showPlaylistDialog) {
         AddToPlaylistDialog(
             song = song,
@@ -1047,14 +635,13 @@ fun FullPlayerContent(
         )
     }
 
-    // 2. View Artist Songs Dialog
     if (showArtistDialog) {
         val artistTracks = remember(currentPlaylist, song) {
-            val matching = currentPlaylist.filter { it.artist.equals(song.artist, ignoreCase = true) }
+            val matching = currentPlaylist.filter { it.displayArtist.equals(song.displayArtist, ignoreCase = true) }
             if (matching.isNotEmpty()) matching else listOf(song)
         }
         ArtistSongsDialog(
-            artistName = song.artist,
+            artistName = song.displayArtist,
             artistTracks = artistTracks,
             onDismiss = { showArtistDialog = false },
             onTrackClick = { selectedTrack ->
@@ -1064,7 +651,6 @@ fun FullPlayerContent(
         )
     }
 
-    // 3. Sleep Timer Dialog
     if (showSleepTimerDialog) {
         SleepTimerDialog(
             currentTimerMinutes = activeSleepTimerMinutes,
@@ -1081,11 +667,621 @@ fun FullPlayerContent(
         )
     }
 
-    // 4. In-App Equalizer Dialog
     if (showEqualizerDialog) {
         EqualizerDialog(
             onDismiss = { showEqualizerDialog = false }
         )
+    }
+}
+
+@Composable
+private fun FullPlayerTopBar(
+    song: AudioEntity,
+    animatedTitleColor: Color,
+    animatedLightVibrant: Color,
+    activeSleepTimerMinutes: Int?,
+    onCollapse: () -> Unit,
+    onOpenEditMetadata: () -> Unit,
+    onOpenPlaylist: () -> Unit,
+    onOpenArtist: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    onOpenEqualizer: () -> Unit
+) {
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onCollapse) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = "Collapse Player",
+                modifier = Modifier.size(34.dp),
+                tint = animatedTitleColor
+            )
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "PLAYING FROM YOUR MUSIC",
+                style = MaterialTheme.typography.labelSmall,
+                color = animatedLightVibrant,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            )
+            Text(
+                text = song.album.ifEmpty { "Local Tracks" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = animatedTitleColor,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Options",
+                    tint = animatedTitleColor,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Edit Song Details") },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        onOpenEditMetadata()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Add to Playlist") },
+                    leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        onOpenPlaylist()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("View Artist: ${song.displayArtist}") },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        onOpenArtist()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Share Track") },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "Listening to ${song.title}")
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Now playing: \"${song.title}\" by ${song.displayArtist} on Mimica Music Player 🎵"
+                            )
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (activeSleepTimerMinutes != null) "Sleep Timer: ${activeSleepTimerMinutes}m left" else "Sleep Timer"
+                        )
+                    },
+                    leadingIcon = { Icon(Icons.Default.Timer, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        onOpenSleepTimer()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Equalizer") },
+                    leadingIcon = { Icon(Icons.Default.Equalizer, contentDescription = null) },
+                    onClick = {
+                        showMenu = false
+                        try {
+                            val eqIntent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
+                                putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                                putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+                            }
+                            context.startActivity(eqIntent)
+                        } catch (e: ActivityNotFoundException) {
+                            onOpenEqualizer()
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerAlbumArt(
+    song: AudioEntity,
+    onNextClick: () -> Unit,
+    onPreviousClick: () -> Unit,
+    onCollapse: () -> Unit,
+    onImageLoaded: (android.graphics.Bitmap) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val collapseThresholdPx = with(density) { 140.dp.toPx() }
+    val swipeThresholdPx = with(density) { 100.dp.toPx() }
+    val dragOffsetY = remember { Animatable(0f) }
+    val dragOffsetX = remember { Animatable(0f) }
+
+    AnimatedContent(
+        targetState = song.id,
+        transitionSpec = {
+            (fadeIn(tween(400)) + scaleIn(initialScale = 0.92f, animationSpec = tween(400)))
+                .togetherWith(fadeOut(tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
+        },
+        label = "AlbumArtTransition"
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.68f)
+                .aspectRatio(1f)
+                .offset { IntOffset(dragOffsetX.value.roundToInt(), dragOffsetY.value.roundToInt()) }
+                .graphicsLayer {
+                    alpha = (1f - (abs(dragOffsetX.value) / (swipeThresholdPx * 2.5f))).coerceIn(0.55f, 1f)
+                }
+                .shadow(
+                    elevation = 12.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    clip = false
+                )
+                .pointerInput(song.id) {
+                    val touchSlop = viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var totalDragX = 0f
+                        var totalDragY = 0f
+                        var dragDirection = 0 // 0: undecided, 1: horizontal, 2: vertical
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                            if (!change.pressed) {
+                                if (dragDirection == 1) {
+                                    coroutineScope.launch {
+                                        if (dragOffsetX.value < -swipeThresholdPx) {
+                                            dragOffsetX.animateTo(-280f, tween(150))
+                                            onNextClick()
+                                            dragOffsetX.snapTo(280f)
+                                            dragOffsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                        } else if (dragOffsetX.value > swipeThresholdPx) {
+                                            dragOffsetX.animateTo(280f, tween(150))
+                                            onPreviousClick()
+                                            dragOffsetX.snapTo(-280f)
+                                            dragOffsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                        } else {
+                                            dragOffsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                        }
+                                    }
+                                } else if (dragDirection == 2) {
+                                    coroutineScope.launch {
+                                        if (dragOffsetY.value >= collapseThresholdPx) {
+                                            onCollapse()
+                                            dragOffsetY.snapTo(0f)
+                                        } else {
+                                            dragOffsetY.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                                        }
+                                    }
+                                }
+                                break
+                            }
+
+                            val deltaX = change.position.x - change.previousPosition.x
+                            val deltaY = change.position.y - change.previousPosition.y
+                            totalDragX += deltaX
+                            totalDragY += deltaY
+
+                            if (dragDirection == 0) {
+                                if (abs(totalDragX) > touchSlop || abs(totalDragY) > touchSlop) {
+                                    if (abs(totalDragX) >= abs(totalDragY)) {
+                                        dragDirection = 1
+                                    } else if (totalDragY > 0) {
+                                        dragDirection = 2
+                                    }
+                                }
+                            }
+
+                            if (dragDirection == 1) {
+                                change.consume()
+                                coroutineScope.launch {
+                                    dragOffsetX.snapTo(dragOffsetX.value + deltaX)
+                                }
+                            } else if (dragDirection == 2) {
+                                if (deltaY > 0 || dragOffsetY.value > 0) {
+                                    change.consume()
+                                    coroutineScope.launch {
+                                        dragOffsetY.snapTo((dragOffsetY.value + deltaY).coerceAtLeast(0f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!song.displayArtworkUri.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(song.displayArtworkUri)
+                            .crossfade(500)
+                            .allowHardware(false)
+                            .build(),
+                        contentDescription = song.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                        onSuccess = { success ->
+                            val bitmap = (success.result.drawable as? BitmapDrawable)?.bitmap
+                            if (bitmap != null) {
+                                onImageLoaded(bitmap)
+                            }
+                        }
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(88.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.40f))
+                            )
+                        )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerSongInfo(
+    song: AudioEntity,
+    animatedTitleColor: Color,
+    animatedArtistColor: Color,
+    animatedLightVibrant: Color,
+    playbackError: String?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = song.title,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = animatedTitleColor,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = song.displayArtist,
+            style = MaterialTheme.typography.titleMedium,
+            color = animatedArtistColor,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Surface(
+            color = animatedLightVibrant.copy(alpha = 0.2f),
+            shape = RoundedCornerShape(6.dp)
+        ) {
+            Text(
+                text = song.fileFormat,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = animatedLightVibrant,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+        }
+
+        if (playbackError != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = playbackError,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerSeekBar(
+    currentPosition: Long,
+    duration: Long,
+    songDuration: Long,
+    animatedLightVibrant: Color,
+    animatedVibrant: Color,
+    animatedArtistColor: Color,
+    onSeek: (Long) -> Unit
+) {
+    val totalDuration = if (duration > 0) duration else songDuration.coerceAtLeast(1L)
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekFraction by remember { mutableFloatStateOf(0f) }
+
+    val currentFraction = (currentPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+    val progressFraction = if (isSeeking) seekFraction else currentFraction
+
+    val displayedPositionMs = if (isSeeking) {
+        (seekFraction * totalDuration).toLong()
+    } else {
+        currentPosition
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Slider(
+            value = progressFraction,
+            onValueChange = { frac ->
+                isSeeking = true
+                seekFraction = frac
+            },
+            onValueChangeFinished = {
+                isSeeking = false
+                val targetMs = (seekFraction * totalDuration).toLong()
+                onSeek(targetMs)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = SliderDefaults.colors(
+                thumbColor = animatedLightVibrant,
+                activeTrackColor = animatedVibrant,
+                inactiveTrackColor = animatedVibrant.copy(alpha = 0.25f)
+            )
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = formatTime(displayedPositionMs),
+                style = MaterialTheme.typography.labelMedium,
+                color = animatedArtistColor.copy(alpha = 0.8f),
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = formatTime(totalDuration),
+                style = MaterialTheme.typography.labelMedium,
+                color = animatedArtistColor.copy(alpha = 0.8f),
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerControls(
+    isPlaying: Boolean,
+    isShuffle: Boolean,
+    isRepeat: Boolean,
+    animatedTitleColor: Color,
+    animatedArtistColor: Color,
+    animatedLightVibrant: Color,
+    animatedVibrant: Color,
+    onShuffleClick: () -> Unit,
+    onPreviousClick: () -> Unit,
+    onPlayPauseClick: () -> Unit,
+    onNextClick: () -> Unit,
+    onRepeatClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AnimatedScaleIconButton(
+            onClick = onShuffleClick,
+            size = 46.dp
+        ) {
+            Icon(
+                imageVector = Icons.Default.Shuffle,
+                contentDescription = "Shuffle",
+                tint = if (isShuffle) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.5f),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+
+        AnimatedScaleIconButton(
+            onClick = onPreviousClick,
+            size = 52.dp
+        ) {
+            Icon(
+                imageVector = Icons.Default.SkipPrevious,
+                contentDescription = "Previous Track",
+                modifier = Modifier.size(34.dp),
+                tint = animatedTitleColor
+            )
+        }
+
+        Surface(
+            onClick = onPlayPauseClick,
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape),
+            shape = CircleShape,
+            color = Color.Transparent
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.linearGradient(listOf(animatedVibrant, animatedLightVibrant))),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = isPlaying,
+                    transitionSpec = {
+                        (fadeIn(tween(200)) + scaleIn(tween(200)))
+                            .togetherWith(fadeOut(tween(200)) + scaleOut(tween(200)))
+                    },
+                    label = "PlayPauseMorph"
+                ) { playing ->
+                    Icon(
+                        imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (playing) "Pause" else "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(38.dp)
+                    )
+                }
+            }
+        }
+
+        AnimatedScaleIconButton(
+            onClick = onNextClick,
+            size = 52.dp
+        ) {
+            Icon(
+                imageVector = Icons.Default.SkipNext,
+                contentDescription = "Next Track",
+                modifier = Modifier.size(34.dp),
+                tint = animatedTitleColor
+            )
+        }
+
+        AnimatedScaleIconButton(
+            onClick = onRepeatClick,
+            size = 46.dp
+        ) {
+            Icon(
+                imageVector = Icons.Default.Repeat,
+                contentDescription = "Repeat",
+                tint = if (isRepeat) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.5f),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerVolumeAndUpNext(
+    isFavorite: Boolean,
+    nextSong: AudioEntity?,
+    animatedLightVibrant: Color,
+    animatedVibrant: Color,
+    animatedArtistColor: Color,
+    onFavoriteClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+    val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
+    var currentVolume by remember {
+        mutableFloatStateOf(
+            (audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10).toFloat() / maxVolume.toFloat()
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(0.94f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (currentVolume > 0.5f) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeDown,
+                contentDescription = "Volume",
+                tint = animatedArtistColor.copy(alpha = 0.8f),
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Slider(
+                value = currentVolume,
+                onValueChange = { vol ->
+                    currentVolume = vol
+                    audioManager?.let { am ->
+                        val target = (vol * maxVolume).toInt()
+                        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = animatedLightVibrant,
+                    activeTrackColor = animatedVibrant,
+                    inactiveTrackColor = animatedVibrant.copy(alpha = 0.2f)
+                )
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            IconButton(
+                onClick = onFavoriteClick,
+                modifier = Modifier.size(34.dp)
+            ) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    contentDescription = "Favorite",
+                    tint = if (isFavorite) animatedLightVibrant else animatedArtistColor.copy(alpha = 0.6f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        if (nextSong != null) {
+            Text(
+                text = "Up Next: ${nextSong.title} • ${nextSong.displayArtist}",
+                style = MaterialTheme.typography.labelSmall,
+                color = animatedArtistColor.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -1286,10 +1482,10 @@ fun ArtistSongsDialog(
                                         .background(MaterialTheme.colorScheme.primaryContainer),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (!track.albumArtUri.isNullOrEmpty()) {
+                                    if (!track.displayArtworkUri.isNullOrEmpty()) {
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
-                                                .data(track.albumArtUri)
+                                                .data(track.displayArtworkUri)
                                                 .crossfade(true)
                                                 .build(),
                                             contentDescription = null,

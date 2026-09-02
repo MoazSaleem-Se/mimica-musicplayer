@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -61,6 +62,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.ui.components.AddToPlaylistDialog
+import com.mimica.musicplayer.ui.components.EditSongMetadataDialog
 import com.mimica.musicplayer.ui.viewmodel.MusicScanViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
@@ -81,6 +83,7 @@ fun SearchScreen(
     val isPlayerPlaying by playerViewModel.isPlaying.collectAsState()
 
     var songForPlaylistDialog by remember { mutableStateOf<AudioEntity?>(null) }
+    var songToEdit by remember { mutableStateOf<AudioEntity?>(null) }
 
     val allLocalSongs: List<AudioEntity> = remember(scanState) {
         when (val state = scanState) {
@@ -97,7 +100,7 @@ fun SearchScreen(
         } else {
             allLocalSongs.filter { song ->
                 song.title.contains(searchQuery, ignoreCase = true) ||
-                        song.artist.contains(searchQuery, ignoreCase = true) ||
+                        song.displayArtist.contains(searchQuery, ignoreCase = true) ||
                         song.album.contains(searchQuery, ignoreCase = true)
             }
         }
@@ -146,51 +149,43 @@ fun SearchScreen(
                     }
                 }
             },
-            shape = RoundedCornerShape(16.dp),
             singleLine = true,
+            shape = RoundedCornerShape(16.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = Color.Transparent
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             )
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Content Area
         if (searchQuery.isBlank()) {
-            // Empty / Initial State (No search query)
+            // Empty State (No query yet)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 32.dp),
+                    .padding(horizontal = 32.dp, vertical = 40.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    modifier = Modifier.size(64.dp)
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Search for songs",
+                    text = "Search for songs, artists, or albums",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Find tracks by title, artist, or album from your scanned library.",
+                    text = "Type in the search bar above to quickly find local music tracks on your device.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -255,6 +250,7 @@ fun SearchScreen(
                         SearchSongListItemContent(
                             audio = audio,
                             isPlaying = isSongPlaying,
+                            onEditClick = { songToEdit = audio },
                             onClick = {
                                 if (audio.filePath.isBlank()) {
                                     Toast.makeText(context, "This song is not available offline", Toast.LENGTH_SHORT).show()
@@ -309,13 +305,25 @@ fun SearchScreen(
             onDismiss = { songForPlaylistDialog = null }
         )
     }
+
+    // Edit Song Details Dialog
+    if (songToEdit != null) {
+        EditSongMetadataDialog(
+            song = songToEdit!!,
+            onDismiss = { songToEdit = null },
+            onSave = { newArtist, newArtwork ->
+                playerViewModel.updateSongCustomMetadata(songToEdit!!.id, newArtist, newArtwork)
+            }
+        )
+    }
 }
 
 @Composable
 fun SearchSongListItemContent(
     audio: AudioEntity,
     isPlaying: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onEditClick: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier
@@ -331,20 +339,20 @@ fun SearchSongListItemContent(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(52.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                if (!audio.albumArtUri.isNullOrEmpty()) {
+                if (!audio.displayArtworkUri.isNullOrEmpty()) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(audio.albumArtUri)
+                            .data(audio.displayArtworkUri)
                             .crossfade(true)
                             .build(),
                         contentDescription = audio.title,
@@ -361,7 +369,7 @@ fun SearchSongListItemContent(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -373,7 +381,7 @@ fun SearchSongListItemContent(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${audio.artist} • ${audio.album}",
+                    text = "${audio.displayArtist} • ${audio.album}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -381,17 +389,41 @@ fun SearchSongListItemContent(
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            Text(
-                text = audio.durationFormatted,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // File format badge and duration
+            Column(horizontalAlignment = Alignment.End) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = audio.fileFormat,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = audio.durationFormatted,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            Spacer(modifier = Modifier.width(4.dp))
+            if (onEditClick != null) {
+                IconButton(onClick = onEditClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Song",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
-            IconButton(onClick = onClick) {
+            IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",

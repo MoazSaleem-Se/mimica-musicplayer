@@ -36,11 +36,31 @@ class MusicRepository(
 
     suspend fun scanAndCacheMusic(): List<AudioEntity> {
         val settings = settingsDataStore.userSettingsFlow.first()
+        val customMetaList = try {
+            audioDao.getCustomMetadataList().associateBy { it.id }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+
         val scanned = mediaScanner.scanLocalMusic(settings.excludedFolders)
         if (scanned.isNotEmpty()) {
+            val merged = scanned.map { song ->
+                val custom = customMetaList[song.id]
+                if (custom != null) {
+                    song.copy(
+                        customArtistName = custom.customArtistName,
+                        customArtworkUri = custom.customArtworkUri
+                    )
+                } else song
+            }
             audioDao.clearAll()
-            audioDao.insertAll(scanned)
+            audioDao.insertAll(merged)
+            return merged
         }
         return scanned
+    }
+
+    suspend fun updateCustomMetadata(id: Long, customArtistName: String?, customArtworkUri: String?) {
+        audioDao.updateCustomMetadata(id, customArtistName, customArtworkUri)
     }
 }
