@@ -136,6 +136,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import android.content.res.Configuration
+import androidx.compose.ui.tooling.preview.Preview
+import com.mimica.musicplayer.ui.theme.AppTheme
 import com.mimica.musicplayer.data.local.AudioEntity
 import com.mimica.musicplayer.ui.viewmodel.PlayerViewModel
 import com.mimica.musicplayer.ui.viewmodel.PlaylistViewModel
@@ -149,7 +152,8 @@ import kotlin.math.roundToInt
 @Composable
 fun NowPlayingBottomSheet(
     playerViewModel: PlayerViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    playlistViewModel: PlaylistViewModel = viewModel()
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
@@ -228,6 +232,7 @@ fun NowPlayingBottomSheet(
                 playbackError = playbackError,
                 palette = albumPalette,
                 activeSleepTimerMinutes = sleepTimerMinutes,
+                playlistViewModel = playlistViewModel,
                 playerViewModel = playerViewModel,
                 onPlayPauseClick = { playerViewModel.togglePlayPause() },
                 onNextClick = { playerViewModel.skipToNext() },
@@ -454,9 +459,9 @@ fun FullPlayerContent(
     isFavorite: Boolean,
     currentPlaylist: List<AudioEntity> = emptyList(),
     playbackError: String? = null,
-    palette: Palette?,
+    palette: Palette? = null,
     activeSleepTimerMinutes: Int? = null,
-    playlistViewModel: PlaylistViewModel = viewModel(),
+    playlistViewModel: PlaylistViewModel? = null,
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -468,7 +473,7 @@ fun FullPlayerContent(
     onPlayTrack: (AudioEntity) -> Unit,
     onCollapse: () -> Unit,
     onImageLoaded: (android.graphics.Bitmap) -> Unit = {},
-    playerViewModel: PlayerViewModel = viewModel()
+    playerViewModel: PlayerViewModel? = null
 ) {
     val context = LocalContext.current
     var showEditMetadataDialog by remember { mutableStateOf(false) }
@@ -622,17 +627,21 @@ fun FullPlayerContent(
             song = song,
             onDismiss = { showEditMetadataDialog = false },
             onSave = { newArtist, newArtwork ->
-                playerViewModel.updateSongCustomMetadata(song.id, newArtist, newArtwork)
+                playerViewModel?.updateSongCustomMetadata(song.id, newArtist, newArtwork)
             }
         )
     }
 
     if (showPlaylistDialog) {
-        AddToPlaylistDialog(
-            song = song,
-            playlistViewModel = playlistViewModel,
-            onDismiss = { showPlaylistDialog = false }
-        )
+        if (playlistViewModel != null) {
+            AddToPlaylistDialog(
+                song = song,
+                playlistViewModel = playlistViewModel,
+                onDismiss = { showPlaylistDialog = false }
+            )
+        } else {
+            showPlaylistDialog = false
+        }
     }
 
     if (showArtistDialog) {
@@ -1222,12 +1231,19 @@ private fun FullPlayerVolumeAndUpNext(
     onFavoriteClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
-    val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
-    var currentVolume by remember {
-        mutableFloatStateOf(
-            (audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10).toFloat() / maxVolume.toFloat()
-        )
+    val audioManager = remember {
+        try {
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val maxVolume = remember(audioManager) {
+        audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
+    }
+    var currentVolume by remember(audioManager, maxVolume) {
+        val initialVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10
+        mutableFloatStateOf(initialVol.toFloat() / maxVolume.toFloat())
     }
 
     Column(
@@ -1254,7 +1270,11 @@ private fun FullPlayerVolumeAndUpNext(
                     currentVolume = vol
                     audioManager?.let { am ->
                         val target = (vol * maxVolume).toInt()
-                        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                        try {
+                            am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                        } catch (e: Exception) {
+                            // Safely ignored in Preview or restricted contexts
+                        }
                     }
                 },
                 modifier = Modifier.weight(1f),
@@ -1745,4 +1765,94 @@ private fun formatTime(millis: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+}
+
+// -------------------------------------------------------------
+// COMPOSE PREVIEWS
+// -------------------------------------------------------------
+
+private val samplePreviewSong = AudioEntity(
+    id = 1L,
+    title = "Blinding Lights",
+    artist = "The Weeknd",
+    album = "After Hours",
+    duration = 200000L,
+    filePath = "/storage/emulated/0/Music/Blinding_Lights.mp3",
+    albumArtUri = null,
+    albumId = 1L,
+    plays = 18,
+    lastPlayed = 1725280000000L,
+    totalTime = 3600000L,
+    customArtworkUri = null,
+    customArtistName = null,
+    fileFormat = "MP3"
+)
+
+@Preview(
+    name = "Full Player - Light",
+    showBackground = true,
+    showSystemUi = true
+)
+@Composable
+fun FullPlayerContentLightPreview() {
+    AppTheme(darkTheme = false, dynamicColor = false) {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            FullPlayerContent(
+                song = samplePreviewSong,
+                isPlaying = true,
+                currentPosition = 64000L,
+                duration = samplePreviewSong.duration,
+                isShuffle = false,
+                isRepeat = true,
+                isFavorite = true,
+                currentPlaylist = listOf(samplePreviewSong),
+                palette = null,
+                onPlayPauseClick = {},
+                onNextClick = {},
+                onPreviousClick = {},
+                onShuffleClick = {},
+                onRepeatClick = {},
+                onFavoriteClick = {},
+                onSeek = {},
+                onSetSleepTimer = {},
+                onPlayTrack = {},
+                onCollapse = {}
+            )
+        }
+    }
+}
+
+@Preview(
+    name = "Full Player - Dark",
+    showBackground = true,
+    showSystemUi = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES
+)
+@Composable
+fun FullPlayerContentDarkPreview() {
+    AppTheme(darkTheme = true, dynamicColor = false) {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            FullPlayerContent(
+                song = samplePreviewSong,
+                isPlaying = true,
+                currentPosition = 64000L,
+                duration = samplePreviewSong.duration,
+                isShuffle = true,
+                isRepeat = false,
+                isFavorite = false,
+                currentPlaylist = listOf(samplePreviewSong),
+                palette = null,
+                onPlayPauseClick = {},
+                onNextClick = {},
+                onPreviousClick = {},
+                onShuffleClick = {},
+                onRepeatClick = {},
+                onFavoriteClick = {},
+                onSeek = {},
+                onSetSleepTimer = {},
+                onPlayTrack = {},
+                onCollapse = {}
+            )
+        }
+    }
 }
