@@ -490,7 +490,14 @@ fun FullPlayerContent(
 
     val targetBgTop = remember(palette) {
         palette?.let {
-            val colorInt = it.getDarkVibrantColor(it.getDominantColor(defaultDarkBg.toArgb()))
+            val colorInt = it.getDarkVibrantColor(it.getVibrantColor(defaultDarkBg.toArgb()))
+            Color(colorInt)
+        } ?: defaultDarkBg
+    }
+
+    val targetBgMiddle = remember(palette) {
+        palette?.let {
+            val colorInt = it.getDominantColor(defaultDarkBg.toArgb())
             Color(colorInt)
         } ?: defaultDarkBg
     }
@@ -530,8 +537,9 @@ fun FullPlayerContent(
         } ?: defaultPrimary
     }
 
-    val animatedBgTop by animateColorAsState(targetBgTop, tween(500), label = "BgTop")
-    val animatedBgBottom by animateColorAsState(targetBgBottom, tween(500), label = "BgBottom")
+    val animatedBgTop by animateColorAsState(targetBgTop, tween(600, easing = FastOutSlowInEasing), label = "BgTop")
+    val animatedBgMiddle by animateColorAsState(targetBgMiddle, tween(600, easing = FastOutSlowInEasing), label = "BgMiddle")
+    val animatedBgBottom by animateColorAsState(targetBgBottom, tween(600, easing = FastOutSlowInEasing), label = "BgBottom")
     val animatedTitleColor by animateColorAsState(targetTitleColor, tween(400), label = "TitleColor")
     val animatedArtistColor by animateColorAsState(targetArtistColor, tween(400), label = "ArtistColor")
     val animatedLightVibrant by animateColorAsState(targetLightVibrant, tween(400), label = "LightVibrant")
@@ -544,82 +552,99 @@ fun FullPlayerContent(
         } else null
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(animatedBgTop, animatedBgBottom)))
+            .background(Brush.verticalGradient(listOf(animatedBgTop, animatedBgMiddle, animatedBgBottom)))
             .windowInsetsPadding(WindowInsets.statusBars)
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
     ) {
-        FullPlayerTopBar(
-            song = song,
-            animatedTitleColor = animatedTitleColor,
-            animatedLightVibrant = animatedLightVibrant,
-            activeSleepTimerMinutes = activeSleepTimerMinutes,
-            onCollapse = onCollapse,
-            onOpenEditMetadata = { showEditMetadataDialog = true },
-            onOpenPlaylist = { showPlaylistDialog = true },
-            onOpenArtist = { showArtistDialog = true },
-            onOpenSleepTimer = { showSleepTimerDialog = true },
-            onOpenEqualizer = { showEqualizerDialog = true }
+        // Subtle dark overlay scrim for high readability and contrast
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.2f),
+                            Color.Black.copy(alpha = 0.45f),
+                            Color.Black.copy(alpha = 0.65f)
+                        )
+                    )
+                )
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            FullPlayerTopBar(
+                song = song,
+                animatedTitleColor = animatedTitleColor,
+                animatedLightVibrant = animatedLightVibrant,
+                activeSleepTimerMinutes = activeSleepTimerMinutes,
+                onCollapse = onCollapse,
+                onOpenEditMetadata = { showEditMetadataDialog = true },
+                onOpenPlaylist = { showPlaylistDialog = true },
+                onOpenArtist = { showArtistDialog = true },
+                onOpenSleepTimer = { showSleepTimerDialog = true },
+                onOpenEqualizer = { showEqualizerDialog = true }
+            )
 
-        FullPlayerAlbumArt(
-            song = song,
-            onNextClick = onNextClick,
-            onPreviousClick = onPreviousClick,
-            onCollapse = onCollapse,
-            onImageLoaded = onImageLoaded
-        )
+            FullPlayerAlbumArt(
+                song = song,
+                modifier = Modifier.weight(1f),
+                onNextClick = onNextClick,
+                onPreviousClick = onPreviousClick,
+                onCollapse = onCollapse,
+                onImageLoaded = onImageLoaded
+            )
 
-        Spacer(modifier = Modifier.height(12.dp))
+            FullPlayerSongInfo(
+                song = song,
+                animatedTitleColor = animatedTitleColor,
+                animatedArtistColor = animatedArtistColor,
+                animatedLightVibrant = animatedLightVibrant,
+                playbackError = playbackError
+            )
 
-        FullPlayerSongInfo(
-            song = song,
-            animatedTitleColor = animatedTitleColor,
-            animatedArtistColor = animatedArtistColor,
-            animatedLightVibrant = animatedLightVibrant,
-            playbackError = playbackError
-        )
+            FullPlayerSeekBar(
+                currentPosition = currentPosition,
+                duration = duration,
+                songDuration = song.duration,
+                animatedLightVibrant = animatedLightVibrant,
+                animatedVibrant = animatedVibrant,
+                animatedArtistColor = animatedArtistColor,
+                onSeek = onSeek
+            )
 
-        FullPlayerSeekBar(
-            currentPosition = currentPosition,
-            duration = duration,
-            songDuration = song.duration,
-            animatedLightVibrant = animatedLightVibrant,
-            animatedVibrant = animatedVibrant,
-            animatedArtistColor = animatedArtistColor,
-            onSeek = onSeek
-        )
+            FullPlayerControls(
+                isPlaying = isPlaying,
+                isShuffle = isShuffle,
+                isRepeat = isRepeat,
+                animatedTitleColor = animatedTitleColor,
+                animatedArtistColor = animatedArtistColor,
+                animatedLightVibrant = animatedLightVibrant,
+                animatedVibrant = animatedVibrant,
+                onShuffleClick = onShuffleClick,
+                onPreviousClick = onPreviousClick,
+                onPlayPauseClick = onPlayPauseClick,
+                onNextClick = onNextClick,
+                onRepeatClick = onRepeatClick
+            )
 
-        FullPlayerControls(
-            isPlaying = isPlaying,
-            isShuffle = isShuffle,
-            isRepeat = isRepeat,
-            animatedTitleColor = animatedTitleColor,
-            animatedArtistColor = animatedArtistColor,
-            animatedLightVibrant = animatedLightVibrant,
-            animatedVibrant = animatedVibrant,
-            onShuffleClick = onShuffleClick,
-            onPreviousClick = onPreviousClick,
-            onPlayPauseClick = onPlayPauseClick,
-            onNextClick = onNextClick,
-            onRepeatClick = onRepeatClick
-        )
-
-        FullPlayerVolumeAndUpNext(
-            isFavorite = isFavorite,
-            nextSong = nextSong,
-            animatedLightVibrant = animatedLightVibrant,
-            animatedVibrant = animatedVibrant,
-            animatedArtistColor = animatedArtistColor,
-            onFavoriteClick = onFavoriteClick
-        )
+            FullPlayerVolumeAndUpNext(
+                isFavorite = isFavorite,
+                nextSong = nextSong,
+                animatedLightVibrant = animatedLightVibrant,
+                animatedVibrant = animatedVibrant,
+                animatedArtistColor = animatedArtistColor,
+                onFavoriteClick = onFavoriteClick
+            )
+        }
     }
 
     if (showEditMetadataDialog) {
@@ -824,6 +849,7 @@ private fun FullPlayerTopBar(
 @Composable
 private fun FullPlayerAlbumArt(
     song: AudioEntity,
+    modifier: Modifier = Modifier,
     onNextClick: () -> Unit,
     onPreviousClick: () -> Unit,
     onCollapse: () -> Unit,
@@ -837,7 +863,7 @@ private fun FullPlayerAlbumArt(
     val dragOffsetX = remember { Animatable(0f) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         contentAlignment = Alignment.Center
@@ -849,10 +875,10 @@ private fun FullPlayerAlbumArt(
                     .togetherWith(fadeOut(tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
             },
             label = "AlbumArtTransition"
-        ) {
+        ) { currentId ->
             Card(
                 modifier = Modifier
-                    .fillMaxWidth(0.78f)
+                    .fillMaxWidth(1f)
                     .aspectRatio(1f)
                     .offset { IntOffset(dragOffsetX.value.roundToInt(), dragOffsetY.value.roundToInt()) }
                     .graphicsLayer {
@@ -863,7 +889,7 @@ private fun FullPlayerAlbumArt(
                         shape = RoundedCornerShape(24.dp),
                         clip = false
                     )
-                    .pointerInput(song.id) {
+                    .pointerInput(currentId) {
                     val touchSlop = viewConfiguration.touchSlop
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -1066,11 +1092,16 @@ private fun FullPlayerSeekBar(
     var isSeeking by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
 
-    val currentFraction = (currentPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
-    val progressFraction = if (isSeeking) seekFraction else currentFraction
+    val currentFraction = if (totalDuration > 0) {
+        (currentPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val rawProgressFraction = if (isSeeking) seekFraction else currentFraction
+    val progressFraction = if (rawProgressFraction.isNaN()) 0f else rawProgressFraction.coerceIn(0f, 1f)
 
     val displayedPositionMs = if (isSeeking) {
-        (seekFraction * totalDuration).toLong()
+        (progressFraction * totalDuration).toLong()
     } else {
         currentPosition
     }
@@ -1080,11 +1111,11 @@ private fun FullPlayerSeekBar(
             value = progressFraction,
             onValueChange = { frac ->
                 isSeeking = true
-                seekFraction = frac
+                seekFraction = if (frac.isNaN()) 0f else frac.coerceIn(0f, 1f)
             },
             onValueChangeFinished = {
                 isSeeking = false
-                val targetMs = (seekFraction * totalDuration).toLong()
+                val targetMs = (progressFraction * totalDuration).toLong()
                 onSeek(targetMs)
             },
             modifier = Modifier.fillMaxWidth(),
@@ -1239,11 +1270,13 @@ private fun FullPlayerVolumeAndUpNext(
         }
     }
     val maxVolume = remember(audioManager) {
-        audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
+        val max = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15
+        if (max > 0) max else 15
     }
     var currentVolume by remember(audioManager, maxVolume) {
         val initialVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 10
-        mutableFloatStateOf(initialVol.toFloat() / maxVolume.toFloat())
+        val vol = if (maxVolume > 0) (initialVol.toFloat() / maxVolume.toFloat()) else 0f
+        mutableFloatStateOf(if (vol.isNaN()) 0f else vol.coerceIn(0f, 1f))
     }
 
     Column(
@@ -1265,11 +1298,12 @@ private fun FullPlayerVolumeAndUpNext(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Slider(
-                value = currentVolume,
+                value = if (currentVolume.isNaN()) 0f else currentVolume.coerceIn(0f, 1f),
                 onValueChange = { vol ->
-                    currentVolume = vol
+                    val safeVol = if (vol.isNaN()) 0f else vol.coerceIn(0f, 1f)
+                    currentVolume = safeVol
                     audioManager?.let { am ->
-                        val target = (vol * maxVolume).toInt()
+                        val target = (safeVol * maxVolume).toInt()
                         try {
                             am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
                         } catch (e: Exception) {
